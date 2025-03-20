@@ -1,0 +1,87 @@
+#include"Channel.h"
+
+Channel::Channel(EventLoop* loop,int fd):loop_(loop),fd_(fd)
+{
+}
+
+Channel::~Channel()
+{
+}
+
+int Channel::fd()
+{
+    return fd_;
+}
+
+void Channel::usset()
+{   
+    events_ = events_|EPOLLET;  //边缘触发
+}                 
+
+void Channel::enablereading()
+{
+    events_ = events_|EPOLLIN;
+    loop_->ep() -> updatechannel(this);
+}
+
+void Channel::setinepoll()
+{
+    inepoll_ = true;
+}   
+
+void Channel::setrevents(uint32_t ev)
+{
+    revents_ = ev;
+}
+
+bool Channel::inpoll()
+{
+    return inepoll_;
+}
+
+uint32_t Channel::events()
+{
+    return events_;
+}
+
+uint32_t Channel::revents()
+{
+    return revents_;
+}
+
+void Channel::handleevent()
+{
+    if(revents_ & EPOLLRDHUP) //对方已关闭
+    {                
+        closecallback_();
+    }                 
+    else if(revents_ & EPOLLIN|EPOLLPRI)  //接收缓冲区有数据可读,IN为读
+    {      
+
+        readcallback_();
+    }
+    else if(revents_ & EPOLLOUT)  //有数据需要写，OUT为写
+    {             
+
+    }              
+    else    //其他情况都视为错误
+    {                                           
+        errorcallback_();
+    }                            
+}
+
+
+void Channel::setreadcallback(std::function<void()>fn)
+{
+    readcallback_ = fn;
+}
+
+void Channel::setclosecallback(std::function<void()>fn)
+{
+    closecallback_ = fn;
+}
+
+void Channel::seterrorcallback(std::function<void()>fn)
+{   
+    errorcallback_ = fn;
+}
