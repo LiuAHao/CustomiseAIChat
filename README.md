@@ -27,7 +27,3 @@ Reactor 是事件驱动模型的一种实现。
 Reactor 模式由 Reactor 线程、Handlers 处理器两大角色组成。
 
 
-参考文献：
-I/O多路复用模型之 select、poll、epoll_select poll epoll网络io模型-CSDN博客
-一文搞懂，4种主要的 I/O 模型（高并发IO的底层原理）_高并发io和大量io的区别-CSDN博客
-
