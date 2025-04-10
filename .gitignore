@@ -22,9 +22,6 @@ __pycache__/
 /Client
 /AIServer
 
-# 包含敏感信息的文件
-/python/ai_service.py
-
 # 开发环境文件
 .vscode/
 .idea/
@@ -45,3 +42,7 @@ env/
 *.egg-info/
 dist/
 build/
+
+# 环境变量文件
+.env
+*.env
