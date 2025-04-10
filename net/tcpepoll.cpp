@@ -1,10 +1,3 @@
-/*
-38版
-    基于Reactor服务器设计开发业务
-    *服务器/客户端模式 
-        *客户端：手机App，网站Web，前置服务器支付接口 
-
-*/
 #include<signal.h>
 #include"EchoServer.h"
 
