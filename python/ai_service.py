@@ -1,12 +1,13 @@
 import os
 import json
+import traceback
 from openai import OpenAI
 from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv()
 
-# 从环境变量获取API密钥，添加错误处理
+# 从环境变量获取API密钥
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 if not DEEPSEEK_API_KEY:
     raise ValueError("未找到DEEPSEEK_API_KEY环境变量配置")
@@ -31,14 +32,12 @@ def process_message(message_json):
         
         return json.dumps({
             "success": True,
-            "response": response.choices[0].message.content,
-            "raw_response": str(response)  # 添加原始响应用于调试
+            "response": response.choices[0].message.content
         })
     except Exception as e:
         return json.dumps({
             "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()  # 添加错误追踪
+            "error": str(e)
         })
 
 def get_persona_prompt(persona_id):
@@ -50,6 +49,5 @@ def get_persona_prompt(persona_id):
     return personas.get(persona_id, "你是一个乐于助人的AI助手")
 
 if __name__ == '__main__':
-    # 测试用
     test_msg = '{"persona_id":"p1","messages":[{"role":"user","content":"你好"}]}'
     print(process_message(test_msg))
