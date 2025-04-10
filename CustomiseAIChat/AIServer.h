@@ -3,10 +3,9 @@
 #include"../net/EventLoop.h"
 #include"../net/Connection.h"
 #include"../net/ThreadPool.h"
+#include <json/json.h>  // 添加jsoncpp头文件
 
-//回显服务器
-
-class AIServer{
+class AIServer {
 private:
     TcpServer tcpserver_;
     ThreadPool workthreadpool_;     //处理业务的工作线程池
@@ -23,4 +22,5 @@ public:
     void HandleSendComplete(spConnection conn);                //数据传送完毕后，在TcpServer类中回调此函数      
     //void HandleEpollTimeOut(EventLoop* loop);                //epoll_wait()超时，在TcpServer类中回调此函数    
     void OnMessage(spConnection conn,std::string message);        //处理客户端的请求报文，增加到线程池中
+    std::string ExecPython(const char* cmd, const char* input);   //执行python脚本(需要传入命令和输入
 };
