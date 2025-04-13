@@ -9,14 +9,22 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+# 修改find_package部分，添加Sql模块
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Sql)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Sql)
+
+# 添加数据库源文件
+set(DB_SOURCES
+    ../db/database.cpp
+    ../db/database.h
+)
 
 set(PROJECT_SOURCES
         main.cpp
         mainwindow.cpp
         mainwindow.h
         mainwindow.ui
+        ${DB_SOURCES}  # 添加数据库源文件
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -42,7 +50,11 @@ else()
     endif()
 endif()
 
-target_link_libraries(ui PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
+# 修改target_link_libraries，添加Sql模块
+target_link_libraries(ui PRIVATE 
+    Qt${QT_VERSION_MAJOR}::Widgets 
+    Qt${QT_VERSION_MAJOR}::Sql
+)
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an
@@ -68,3 +80,8 @@ install(TARGETS ui
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(ui)
 endif()
+
+# 添加包含路径
+target_include_directories(ui PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../db
+)
