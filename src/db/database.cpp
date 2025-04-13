@@ -1,14 +1,22 @@
 #include "database.h"
 
 
-Database::Database(QObject *parent) : QObject(parent){
+Database::Database(QString dbName, QObject *parent) : QObject(parent){
     db = QSqlDatabase::addDatabase("QSQLITE");
 }
 
 bool Database::initDatabase(){
-    QString dbPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir mkpath(dbPath);
-    db.setDatabaseName(dbPath + "/aichat.db");
+    // 创建db目录(如果不存在)
+    QString dbDirPath = QDir::currentPath() + "/../../../db"; // 从build目录向上两级到项目根目录
+    QDir dbDir(dbDirPath);
+    if(!dbDir.exists()){
+        dbDir.mkpath(".");
+    }
+    
+    QString dbPath = dbDirPath + "/aichat.db";
+    qDebug() << "数据库存储位置:" << dbPath;
+    
+    db.setDatabaseName(dbPath);
 
     if(!db.open()){
         qWarning() << "数据库打开失败" << db.lastError().text();
@@ -32,6 +40,10 @@ bool Database::initDatabase(){
     return true;
 }
 
+Database::~Database(){
+    db.close();
+}
+
 bool Database::addPersona(const QString &name, const QString &description){
     QSqlQuery query;
     query.prepare("INSERT INTO personas (name, description) VALUES (?, ?)");
@@ -43,6 +55,18 @@ bool Database::addPersona(const QString &name, const QString &description){
     }
     return true;
 }
+
+bool Database::deletePersona(int personaId){
+    QSqlQuery query;
+    query.prepare("DELETE FROM personas WHERE id =?");
+    query.addBindValue(personaId);
+    if(!query.exec()){
+        qWarning() << "删除人设失败" << query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
 
 
 bool Database::addMessage(int personaId, const QString &sender, const QString &message){
