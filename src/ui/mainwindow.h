@@ -3,7 +3,7 @@
 
 #include <QMainWindow>
 #include <QString> // 包含QString头文件
-
+#include "../db/database.h"
 // 前置声明以减少头文件依赖
 class QSplitter;
 class QListWidget;
@@ -28,12 +28,17 @@ private slots:
     void onNewPersonaClicked();
     void onSendClicked();
     void onPersonaSelected(QListWidgetItem *item); // 列表选择槽函数
+    void showPersonaContextMenu(const QPoint &pos); // 添加右键菜单函数声明
 
 private:
     // 辅助函数：初始化UI
     void setupUI();
     // 辅助函数：添加消息到聊天显示区域
     void addChatMessage(const QString &sender, const QString &message, bool isUserMessage);
+    void loadPersonasFromDatabase();
+
+    //数据库
+    Database *db;
 
     // --- UI组件 ---
     QSplitter *mainSplitter;
@@ -56,6 +61,7 @@ private:
     // --- 状态 ---
     QString currentPersonaId;   // 当前选中人设ID
     QString currentPersonaName; // 当前选中人设名称
+    void deletePersona(int personaId); // 添加删除人设函数声明
 };
 
 #endif // MAINWINDOW_H

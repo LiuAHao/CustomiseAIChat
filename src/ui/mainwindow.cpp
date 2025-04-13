@@ -1,5 +1,4 @@
 #include "mainwindow.h"
-
 #include <QSplitter>
 #include <QListWidget>
 #include <QTextEdit>
@@ -15,21 +14,27 @@
 #include <QDialog>
 #include <QFormLayout>
 #include <QDialogButtonBox>
+#include <QLabel>
+
+// 在头部包含菜单相关头文件
+#include <QMenu>
+#include <QAction>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setupUI();
-
+    db = new Database("chat.db");
+    if(!db->initDatabase()){
+        qDebug() << "数据库初始化失败";
+        return;  // 这里可能导致setupUI没有执行
+    }
+    setupUI();  // 确保这行代码被执行
+    loadPersonasFromDatabase(); // 从数据库加载人设
     // --- 连接信号与槽 ---
     connect(newPersonaButton, &QPushButton::clicked, this, &MainWindow::onNewPersonaClicked);
     connect(sendButton, &QPushButton::clicked, this, &MainWindow::onSendClicked);
     connect(personaListWidget, &QListWidget::itemClicked, this, &MainWindow::onPersonaSelected);
-
-    // --- 初始状态(示例) ---
-    // 实际应用中应从数据库加载人设列表
-    personaListWidget->addItem("原版Deepseek");
-    
+  
     // 如果列表不为空则默认选中第一项
     if (personaListWidget->count() > 0) {
         personaListWidget->setCurrentRow(0); // 选中第一项
@@ -48,19 +53,103 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupUI()
 {
+    // --- 主窗口基础设置 ---
+    setStyleSheet("QMainWindow { background-color: #f5f5f5; }");
+
     // --- 左侧面板(人设列表) ---
     leftPaneWidget = new QWidget(this);
-    leftPaneLayout = new QVBoxLayout(leftPaneWidget); // 设置布局父对象
+    leftPaneWidget->setStyleSheet("QWidget { background-color: #ffffff; border-radius: 8px; }");
+    leftPaneLayout = new QVBoxLayout(leftPaneWidget);
 
     newPersonaButton = new QPushButton("新建人设", leftPaneWidget);
-    personaListWidget = new QListWidget(leftPaneWidget);
+    newPersonaButton->setStyleSheet(
+        "QPushButton {"
+        "   background-color: #4a6fa5;"
+        "   color: white;"
+        "   border: none;"
+        "   padding: 8px;"
+        "   border-radius: 4px;"
+        "}"
+        "QPushButton:hover { background-color: #3a5a8f; }"
+    );
 
+    personaListWidget = new QListWidget(leftPaneWidget);
+    personaListWidget->setStyleSheet(
+        "QListWidget {"
+        "   background-color: #ffffff;"
+        "   border: 1px solid #e0e0e0;"
+        "   border-radius: 4px;"
+        "}"
+        "QListWidget::item {"
+        "   padding: 8px;"
+        "   border-bottom: 1px solid #f0f0f0;"
+        "}"
+        "QListWidget::item:hover { background-color: #f8f9fa; }"
+        "QListWidget::item:selected {"
+        "   background-color: #e1e9f7;"
+        "   color: #333333;"  // 深灰色文字
+        "   font-weight: bold;"  // 加粗显示
+        "}"
+    );
+
+    // --- 右侧面板(聊天区域) ---
+    rightPaneWidget = new QWidget(this);
+    rightPaneWidget->setStyleSheet("QWidget { background-color: #ffffff; border-radius: 8px; }");
+    rightPaneLayout = new QVBoxLayout(rightPaneWidget);
+
+    chatDisplayArea = new QTextEdit(rightPaneWidget);
+    chatDisplayArea->setStyleSheet(
+        "QTextEdit {"
+        "   background-color: #ffffff;"
+        "   border: 1px solid #e0e0e0;"
+        "   border-radius: 4px;"
+        "   padding: 10px;"
+        "}"
+    );
+
+    // 输入区域
+    inputAreaWidget = new QWidget(rightPaneWidget);
+    inputAreaLayout = new QHBoxLayout(inputAreaWidget);
+
+    messageInput = new QLineEdit(inputAreaWidget);
+    messageInput->setStyleSheet(
+        "QLineEdit {"
+        "   border: 1px solid #e0e0e0;"
+        "   border-radius: 4px;"
+        "   padding: 8px;"
+        "}"
+    );
+
+    sendButton = new QPushButton("发送", inputAreaWidget);
+    sendButton->setStyleSheet(
+        "QPushButton {"
+        "   background-color: #4a6fa5;"
+        "   color: white;"
+        "   border: none;"
+        "   padding: 8px 16px;"
+        "   border-radius: 4px;"
+        "}"
+        "QPushButton:hover { background-color: #3a5a8f; }"
+        "QPushButton:disabled { background-color: #cccccc; }"
+    );
+
+    
+    // 设置列表项高度
+    personaListWidget->setIconSize(QSize(24, 24));
+    personaListWidget->setSpacing(2);
+    
+    // 启用右键菜单
+    personaListWidget->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(personaListWidget, &QListWidget::customContextMenuRequested, 
+            this, &MainWindow::showPersonaContextMenu);
+    
     leftPaneLayout->addWidget(newPersonaButton);
     leftPaneLayout->addWidget(personaListWidget);
     leftPaneWidget->setLayout(leftPaneLayout); // 应用布局
 
     // --- 右侧面板(聊天区域) ---
     rightPaneWidget = new QWidget(this);
+    rightPaneWidget->setStyleSheet("QWidget { background-color: #ffffff; border-radius: 8px; }");
     rightPaneLayout = new QVBoxLayout(rightPaneWidget);
 
     chatDisplayArea = new QTextEdit(rightPaneWidget);
@@ -89,6 +178,7 @@ void MainWindow::setupUI()
 
     // --- 主分割器 ---
     mainSplitter = new QSplitter(Qt::Horizontal, this);
+    mainSplitter->setStyleSheet("QSplitter::handle { background-color: #e0e0e0; }");
     mainSplitter->addWidget(leftPaneWidget);
     mainSplitter->addWidget(rightPaneWidget);
 
@@ -142,14 +232,12 @@ void MainWindow::onNewPersonaClicked()
         QString personaDesc = descEdit.toPlainText().trimmed();
         
         if (!personaName.isEmpty()) {
-            // 将新人设添加到列表控件
-            QListWidgetItem *newItem = new QListWidgetItem(personaName, personaListWidget);
-            newItem->setData(Qt::UserRole + 1, personaDesc); // 存储描述
-            personaListWidget->addItem(newItem);
-
-            // 选中新创建的人设
-            personaListWidget->setCurrentItem(newItem);
-            onPersonaSelected(newItem);
+            if (db->addPersona(personaName, personaDesc)) {
+                // 添加成功，更新UI
+                personaListWidget->addItem(personaName);
+            } else {
+                QMessageBox::warning(this, "警告", "添加人设失败");
+            }
         }
     }
 }
@@ -158,9 +246,26 @@ void MainWindow::onPersonaSelected(QListWidgetItem *item)
 {
     if (!item) return; // 列表不为空时不应发生，但作为良好实践保留
 
+    // 获取存储在item中的人设ID
+    int personaId = item->data(Qt::UserRole).toInt();
+    
+    // 直接从列表项获取文本作为人设名称
     currentPersonaName = item->text();
-    // 如果存储了ID: currentPersonaId = item->data(Qt::UserRole).toString();
-    currentPersonaId = currentPersonaName; // 本例中使用名称作为ID
+    
+    // 如果名称为空，则从数据库获取
+    if (currentPersonaName.isEmpty()) {
+        // 根据ID从数据库获取人设名称
+        auto personas = db->getAllPersonas();
+        for (auto &persona : personas) {
+            if (persona.first == personaId) {
+                currentPersonaName = persona.second;
+                break;
+            }
+        }
+    }
+    
+    // 设置当前人设ID
+    currentPersonaId = QString::number(personaId);
 
     setWindowTitle(QString("AI 聊天系统 - 与 %1 对话中").arg(currentPersonaName));
     chatDisplayArea->clear(); // 清除之前的聊天记录
@@ -168,7 +273,7 @@ void MainWindow::onPersonaSelected(QListWidgetItem *item)
     // **占位:** 这里应该:
     // 1. 从后端请求'currentPersonaId'的聊天历史
     // 2. 用获取的历史记录填充'chatDisplayArea'
-    qDebug("选中人设: %s", qUtf8Printable(currentPersonaName)); // 调试输出
+    qDebug("选中人设: %s (ID: %s)", qUtf8Printable(currentPersonaName), qUtf8Printable(currentPersonaId)); // 调试输出
 
     // 示例: 添加欢迎消息
     addChatMessage(currentPersonaName, QString("你好！我是%1，我们可以开始聊天了。").arg(currentPersonaName), false);
@@ -234,4 +339,66 @@ void MainWindow::addChatMessage(const QString &sender, const QString &message, b
 
     // 自动滚动到底部
     chatDisplayArea->verticalScrollBar()->setValue(chatDisplayArea->verticalScrollBar()->maximum());
+}
+
+void MainWindow::loadPersonasFromDatabase(){
+    auto personas = db->getAllPersonas();
+    personaListWidget->clear(); // 清空列表
+    
+    for(auto &persona : personas){
+        // 创建列表项
+        QListWidgetItem* item = new QListWidgetItem(persona.second, personaListWidget);
+        
+        // 存储人设ID到item的数据中
+        item->setData(Qt::UserRole, persona.first);
+    }
+}
+
+// 添加右键菜单显示函数
+void MainWindow::showPersonaContextMenu(const QPoint &pos)
+{
+    QListWidgetItem *item = personaListWidget->itemAt(pos);
+    if (!item) return;
+    
+    QMenu contextMenu(tr("人设操作"), this);
+    
+    QAction *deleteAction = new QAction(tr("删除"), this);
+    connect(deleteAction, &QAction::triggered, [=]() {
+        int personaId = item->data(Qt::UserRole).toInt();
+        deletePersona(personaId);
+    });
+    
+    contextMenu.addAction(deleteAction);
+    contextMenu.exec(personaListWidget->mapToGlobal(pos));
+}
+
+// 将删除逻辑移到单独的函数中
+void MainWindow::deletePersona(int personaId)
+{
+    // 确认对话框
+    QMessageBox::StandardButton reply;
+    reply = QMessageBox::question(this, "确认删除", 
+                                 "确定要删除这个人设吗？相关的所有聊天记录也会被删除。",
+                                 QMessageBox::Yes | QMessageBox::No);
+    
+    if (reply == QMessageBox::Yes) {
+        // 调用数据库删除函数
+        if (db->deletePersona(personaId)) {
+            // 删除成功，重新加载人设列表
+            loadPersonasFromDatabase();
+            
+            // 如果当前选中的人设被删除，清空聊天区域
+            if (currentPersonaId.toInt() == personaId) {
+                currentPersonaId = "";
+                currentPersonaName = "";
+                chatDisplayArea->clear();
+                chatDisplayArea->setPlaceholderText("请选择一个人设开始聊天");
+                messageInput->setEnabled(false);
+                sendButton->setEnabled(false);
+                setWindowTitle("AI 聊天系统");
+            }
+        } else {
+            QMessageBox::warning(this, "错误", "删除人设失败");
+        }
+    }
 }
