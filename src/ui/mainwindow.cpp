@@ -15,22 +15,35 @@
 #include <QFormLayout>
 #include <QDialogButtonBox>
 #include <QLabel>
-
-// 在头部包含菜单相关头文件
+#include <QJsonObject>
+#include <QJsonDocument>
 #include <QMenu>
 #include <QAction>
+#include <QMessageBox>
 
-MainWindow::MainWindow(QWidget *parent)
+
+
+#include <QDebug> // 确保包含 QDebug
+
+// 匹配头文件中的新构造函数声明
+MainWindow::MainWindow(NetworkClient* clientPtr, QWidget *parent)
     : QMainWindow(parent)
+    , networkClient(clientPtr) // <-- 使用传入的指针初始化 networkClient
+    // , networkClient(new NetworkClient(this)) // <-- 移除这行错误的初始化
 {
+
+    // 数据库初始化和 UI 设置保持不变
     db = new Database("chat.db");
     if(!db->initDatabase()){
         qDebug() << "数据库初始化失败";
-        return;  // 这里可能导致setupUI没有执行
+        // 考虑更健壮的错误处理，例如抛出异常或显示错误消息
+        // return; // 直接返回可能不是最佳选择，取决于应用需求
+    } else {
+        setupUI();  // 确保 UI 设置在数据库成功初始化后执行
+        loadPersonasFromDatabase(); // 从数据库加载人设
     }
-    setupUI();  // 确保这行代码被执行
-    loadPersonasFromDatabase(); // 从数据库加载人设
-    // --- 连接信号与槽 ---
+
+    // --- 连接信号与槽 (保持不变) ---
     connect(newPersonaButton, &QPushButton::clicked, this, &MainWindow::onNewPersonaClicked);
     connect(sendButton, &QPushButton::clicked, this, &MainWindow::onSendClicked);
     connect(personaListWidget, &QListWidget::itemClicked, this, &MainWindow::onPersonaSelected);
@@ -230,7 +243,7 @@ void MainWindow::onNewPersonaClicked()
     if (dialog.exec() == QDialog::Accepted) {
         QString personaName = nameEdit.text().trimmed();
         QString personaDesc = descEdit.toPlainText().trimmed();
-        
+
         if (!personaName.isEmpty()) {
             if (db->addPersona(personaName, personaDesc)) {
                 // 添加成功，更新UI
@@ -296,25 +309,17 @@ void MainWindow::onSendClicked()
     // 1. 立即显示用户消息(右对齐)
     addChatMessage("你", message, true); // 'true'表示用户消息
 
-    // **占位:** 这里应该:
-    // 2. 将'message'和'currentPersonaId'发送到后端/AI服务
+    // 2. 发送消息到后端
+    int personaId = currentPersonaId.toInt();
+    sendMessageToServer(personaId, message);
+    
     qDebug("发送消息给 %s: %s", qUtf8Printable(currentPersonaName), qUtf8Printable(message));
 
     messageInput->clear(); // 清空输入框
     messageInput->setFocus(); // 重新聚焦到输入框
 
-    // **占位:** 这里应该:
-    // 3. 异步等待来自后端的AI响应
-    // 4. 当响应到达时，显示它(左对齐)
-    // 示例: 模拟延迟后的AI响应(在实际应用中，应使用来自网络/工作线程的信号槽)
-    // 在实际应用中不要像这样阻塞UI线程!
-    // QTimer::singleShot(500, [this, message]() { // 模拟延迟
-    //     QString aiResponse = QString("关于"%"1"，我的想法是... (模拟回复)").arg(message);
-    //     addChatMessage(currentPersonaName, aiResponse, false);
-    // });
-    // 现在，我们只是立即添加一个占位响应:
-    QString aiResponse = QString("模拟 AI 对“%1”的回复...").arg(message);
-    addChatMessage(currentPersonaName, aiResponse, false); // 'false'表示AI消息
+    QString aiResponse = receiveMessageFromServer();
+    addChatMessage(currentPersonaName, aiResponse, false);
 }
 
 // --- 辅助函数 ---
@@ -352,6 +357,44 @@ void MainWindow::loadPersonasFromDatabase(){
         // 存储人设ID到item的数据中
         item->setData(Qt::UserRole, persona.first);
     }
+}
+
+void MainWindow::sendMessageToServer(const int persona_id, const QString &message){
+    auto personaInfo = db->getPersonaInfo(persona_id);
+    if(personaInfo.first.isEmpty()){
+        qWarning() << "获取人设信息失败";
+        return;
+    }
+
+    QJsonObject messageObj;
+    messageObj.insert("personaId", persona_id);
+    messageObj.insert("persona", personaInfo.first);
+    messageObj.insert("personaDesc", personaInfo.second);
+    messageObj.insert("message", message);
+
+    QJsonDocument doc(messageObj);
+    QString jsonString = doc.toJson(QJsonDocument::Compact);
+
+    QByteArray data = jsonString.toUtf8();
+
+    // 将 QByteArray 转换为 std::string 再发送
+    networkClient->sendMessage(data.toStdString()); // <-- 修改这里
+
+}
+
+QString MainWindow::receiveMessageFromServer(){
+    // 接收 std::string
+    std::string received_str = networkClient->receiveMessage();
+
+    // 将 std::string 转换为 QByteArray
+    QByteArray data = QByteArray::fromStdString(received_str);
+
+    // 后续处理 QByteArray (解析 JSON) 保持不变
+    QString jsonString = QString::fromUtf8(data);
+    QJsonDocument doc = QJsonDocument::fromJson(jsonString.toUtf8());
+    QJsonObject obj = doc.object();
+    QString aiResponse = obj.value("response").toString();
+    return aiResponse;
 }
 
 // 添加右键菜单显示函数
