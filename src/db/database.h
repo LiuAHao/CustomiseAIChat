@@ -17,6 +17,11 @@ public:
     bool addMessage(int personaId, const QString &sender, const QString &message);
     QVector<QVector<QString>> getChatHistory(const QString &personaId);
     QVector<QPair<int, QString>> getAllPersonas();
+    QPair<QString, QString> getPersonaInfo(int personaId);
+signals:
+    void personaAdded(int personaId, const QString &name);
+    void personaDeleted(int personaId);
+    void messageAdded(int personaId, const QString &sender, const QString &message);
 
 private:
     QSqlDatabase db;

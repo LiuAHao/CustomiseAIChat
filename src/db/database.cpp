@@ -114,3 +114,16 @@ QVector<QPair<int, QString>> Database::getAllPersonas(){
     }
     return personas;
 }
+
+QPair<QString, QString> Database::getPersonaInfo(int personaId){
+    QPair<QString, QString> info;
+    QSqlQuery query;
+    query.prepare("SELECT name, description FROM personas WHERE id = ?");
+    query.addBindValue(personaId);
+    if(query.exec() && query.next()){
+        info.first = query.value(0).toString();
+        info.second = query.value(1).toString();
+    }
+    return info;
+}
+
