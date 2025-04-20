@@ -11,8 +11,8 @@ CXXFLAGS = -g -std=c++11 -I../net -I/usr/include/jsoncpp \
 # 修改链接选项
 LDFLAGS = -lpthread -ljsoncpp -lQt5Core -lQt5Gui -lQt5Widgets -lQt5XcbQpa -lxcb-cursor
 
-# 目标文件
-TARGETS = Server Client
+# 目标文件 - 移除Client
+TARGETS = Server
 
 # 默认目标
 all: $(TARGETS)
@@ -33,10 +33,6 @@ NET_SRCS = \
 
 # Server编译规则
 Server: Server.cpp AIServer.cpp $(NET_SRCS)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
-
-# Client编译规则
-Client: Client.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 # 清理规则
