@@ -1,6 +1,8 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.5)
 
-project(ui VERSION 0.1 LANGUAGES CXX)
+project(ui LANGUAGES CXX)
+
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -9,82 +11,36 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 修改find_package部分，添加必要的模块
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Sql Gui)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Sql Gui)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Sql)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Sql)
 
-# 添加数据库源文件
-set(DB_SOURCES
-    ../db/database.cpp
-    ../db/database.h
+# 定义源文件列表
+set(SOURCES
+    main.cpp
+    mainwindow.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../db/database.cpp
+    network/NetworkClient.cpp      # <-- 将 Network 改为 network
 )
 
-set(PROJECT_SOURCES
-        main.cpp
-        mainwindow.cpp
-        mainwindow.h
-        mainwindow.ui
-        ${DB_SOURCES}  # 添加数据库源文件
+# 定义头文件列表
+set(HEADERS
+    mainwindow.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../db/database.h
+    network/NetworkClient.h      # <-- 将 Network 改为 network
 )
 
-if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
-    qt_add_executable(ui
-        MANUAL_FINALIZATION
-        ${PROJECT_SOURCES}
-    )
-# Define target properties for Android with Qt 6 as:
-#    set_property(TARGET ui APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
-#                 ${CMAKE_CURRENT_SOURCE_DIR}/android)
-# For more information, see https://doc.qt.io/qt-6/qt-add-executable.html#target-creation
-else()
-    if(ANDROID)
-        add_library(ui SHARED
-            ${PROJECT_SOURCES}
-        )
-# Define properties for Android with Qt 5 after find_package() calls as:
-#    set(ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android")
-    else()
-        add_executable(ui
-            ${PROJECT_SOURCES}
-        )
-    endif()
-endif()
-
-# 修改target_link_libraries，添加必要的库
-target_link_libraries(ui PRIVATE 
-    Qt${QT_VERSION_MAJOR}::Widgets 
-    Qt${QT_VERSION_MAJOR}::Sql
-    Qt${QT_VERSION_MAJOR}::Gui
-    X11
-    xcb-cursor
+add_executable(ui
+    ${SOURCES}
+    ${HEADERS}
 )
 
-# Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
-# If you are developing for iOS or macOS you should consider setting an
-# explicit, fixed bundle identifier manually though.
-if(${QT_VERSION} VERSION_LESS 6.1.0)
-  set(BUNDLE_ID_OPTION MACOSX_BUNDLE_GUI_IDENTIFIER com.example.ui)
-endif()
-set_target_properties(ui PROPERTIES
-    ${BUNDLE_ID_OPTION}
-    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-    MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
-    MACOSX_BUNDLE TRUE
-    WIN32_EXECUTABLE TRUE
-)
+# 链接 Qt 库
+target_link_libraries(ui PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Sql)
 
-include(GNUInstallDirs)
-install(TARGETS ui
-    BUNDLE DESTINATION .
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
-
-if(QT_VERSION_MAJOR EQUAL 6)
-    qt_finalize_executable(ui)
-endif()
-
-# 添加包含路径
+# 添加包含目录
 target_include_directories(ui PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/network
     ${CMAKE_CURRENT_SOURCE_DIR}/../db
 )
+
