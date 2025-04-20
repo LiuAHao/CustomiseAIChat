@@ -27,11 +27,11 @@ void AIServer::Stop(){
 }
 
 void AIServer::HandleNewConnection(spConnection conn){
-    printf("%s EchoServer new connection come in(fd=%d,ip=%s,port=%d).\n",Timestamp::now().tostring().c_str(),conn->fd(),conn->ip().data(),conn->port());  
+    printf("%s new connection come in(fd=%d,ip=%s,port=%d).\n",Timestamp::now().tostring().c_str(),conn->fd(),conn->ip().data(),conn->port());  
 }
 
 void AIServer::HandleClose(spConnection conn){
-    printf("%s EchoServer connection closed(fd=%d,ip=%s,port=%d).\n",Timestamp::now().tostring().c_str(),conn->fd(),conn->ip().data(),conn->port());  
+    printf("%s connection closed(fd=%d,ip=%s,port=%d).\n",Timestamp::now().tostring().c_str(),conn->fd(),conn->ip().data(),conn->port());  
 }
 
 void AIServer::HandleError(spConnection conn){
@@ -63,16 +63,22 @@ void AIServer::OnMessage(spConnection conn, std::string message) {
         if(c == '"' || c == '\\') escaped_msg += '\\';
         escaped_msg += c;
     }
-
     // 构建Python命令
-    std::string python_cmd = "PYTHONPATH=/home/liuahao/test1/netserver/python python3 -c \""
+    std::string python_cmd = "PYTHONPATH=/home/liuahao/AIChat/src/python/ python3 -c \""
                            "from ai_service import process_message; "
                            "print(process_message('" + escaped_msg + "'))\"";
     
     std::string response = ExecPython(python_cmd.c_str(), "");
     
     printf("[AI回应] %s\n", response.c_str());
-    conn->send(response.data(), response.size());
+    char buffer[1024];
+    memset(buffer, 0, sizeof(buffer));
+    int len = strlen(response.c_str());
+
+    memcpy(buffer, &len, 4);
+    memcpy(buffer + 4, response.c_str(), len);
+
+    conn->send(buffer, len + 4);
 }
 
 std::string AIServer::ExecPython(const char* cmd, const char* input){
