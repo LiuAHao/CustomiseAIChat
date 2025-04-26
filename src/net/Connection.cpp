@@ -79,7 +79,7 @@ void Connection::onmessage()
     {    
         bzero(&buffer,sizeof(buffer));
         ssize_t nread = read(fd(),buffer,sizeof(buffer));    //nread代表成功读取到的字节数
-        if(nread > 0)//成功读到数据,把接收到的内容发回去
+        if(nread > 0)
         {     
             inputbuffer_.append(buffer,nread);
         }
@@ -96,7 +96,6 @@ void Connection::onmessage()
                 
                 lastatime_ = Timestamp::now();
 
-                
                 onmessagecallback_(shared_from_this(),message);
             }
             break;

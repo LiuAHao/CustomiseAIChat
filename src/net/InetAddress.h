@@ -16,7 +16,7 @@ public:
     InetAddress(const sockaddr_in addr);
     ~InetAddress();
 
-    const char*ip() const;
+    const char* ip() const;
     uint16_t port() const;
     const sockaddr* addr() const;
     void setaddr(sockaddr_in clientaddr);
