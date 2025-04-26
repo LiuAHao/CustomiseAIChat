@@ -2,14 +2,16 @@
 
 #include<sys/socket.h>
 #include<netinet/in.h>
+
 #include<arpa/inet.h>
 #include<unistd.h>
+#include<vector>
 #include<errno.h>
 #include<string.h>
 #include<cstdio>
 #include<QDebug>       // <-- 将 QDbug 改为 QDebug
 
-NetworkClient::NetworkClient() : socketFd(-1) {}
+NetworkClient::NetworkClient(QObject* parent) : QObject(parent), socketFd(-1) {}
 
 NetworkClient::~NetworkClient() {
     if (socketFd != -1) {
@@ -48,102 +50,57 @@ bool NetworkClient::connectToServer(const std::string& ip, int port) {
 
 void NetworkClient::sendMessage(const std::string& message){
     if(socketFd == -1) {
-        qDebug() << "Socket not initialized";
+        qDebug() << "[NetworkClient] Socket not initialized"; // 添加日志标识
         return;
     }
 
-    // --- 恢复之前的发送逻辑 ---
-    // 注意：这里的缓冲区大小是固定的，如果消息过长会溢出
-    // 并且 strlen 无法正确处理包含'\0'的 std::string
-    // 长度也没有转换为网络字节序
-    char buffer[1024]; // 使用固定大小缓冲区
-    memset(buffer, 0, sizeof(buffer));
-
-    // 使用 strlen 计算长度 (可能不准确)
+    char tmpbuf[1024];
+    memset(tmpbuf,0,sizeof(tmpbuf));
     int len = strlen(message.c_str());
 
-    // 检查长度是否超出缓冲区（减去4字节长度头）
-    if (len + 4 > sizeof(buffer)) {
-        qDebug() << "Error: Message too long for fixed buffer!";
-        return;
-    }
+    memcpy(tmpbuf,&len,4);          //拼接头部信息，第二个为填入的内容，第三个为占据的字节数
+    memcpy(tmpbuf + 4,message.data(),len);    //拼接内容
+    send(socketFd,tmpbuf,len + 4,0);
 
-    // 将主机字节序的 int 长度复制到前 4 字节
-    memcpy(buffer, &len, 4);
-
-    // 将消息内容复制到长度之后
-    memcpy(buffer + 4, message.c_str(), len);
-
-    // 一次性发送 长度 + 内容
-    ssize_t bytes_sent = ::send(socketFd, buffer, len + 4, 0);
-
-    // 添加发送结果检查
-    if (bytes_sent != len + 4) {
-         qDebug() << "Failed to send message completely. Expected:" << (len + 4) << "Sent:" << bytes_sent << "Errno:" << errno;
-         // 可以考虑错误处理
-    }
- 
+    
 }
 
 std::string NetworkClient::receiveMessage(){
     if(socketFd == -1) {
-        qDebug() << "Socket not initialized";
+        qDebug() << "[NetworkClient] Socket not initialized";
         return "";
     }
 
-    int32_t net_len = 0; // 用于接收网络字节序的长度
-    // 1. 接收 4 字节长度
-    ssize_t len_recv = ::recv(socketFd, &net_len, sizeof(net_len), MSG_WAITALL);
-
-    if (len_recv <= 0) {
-        if (len_recv == 0) {
-             qDebug() << "Connection closed by peer while receiving length.";
-        } else if (errno == EINTR) {
-            qDebug() << "recv for length interrupted, retrying might be needed or handle error.";
-            // 在简单阻塞模型中，EINTR 不常见，但处理一下更健壮
-        } else {
-            qDebug() << "Failed to receive message length, errno:" << errno;
+    std::string inputbuffer;
+    
+    char buffer[1024];
+    while(true) //一次读取buffer数据，直到读取完成
+    {    
+        bzero(&buffer,sizeof(buffer));
+        ssize_t nread = ::read(socketFd,buffer,sizeof(buffer));    //nread代表成功读取到的字节数
+        if(nread > 0)
+        {     
+            inputbuffer.append(buffer,nread);
         }
-        return ""; // 返回空字符串表示错误或连接关闭
+        else if(nread == 0){
+            break;
+        }
+        else if(nread == -1){   
+            break;
+        }
     }
-     if (len_recv != sizeof(net_len)) {
-         qDebug() << "Failed to receive full message length, received only" << len_recv << "bytes";
-         return "";
-     }
+    
 
-
-    // 2. 将网络字节序转换为 主机字节序
-    int32_t len = ntohl(net_len);
-
-    // 3. 验证长度
-    if (len <= 0 || len > 1024 * 1024) { // 限制最大长度为 1MB (或根据需要调整)
-        qDebug() << "Invalid message length received:" << len;
-        // 可以考虑关闭连接或进行其他错误处理
+    if(inputbuffer.size() <= 4) {
+        qDebug() << "[NetworkClient] Received message too short:" << inputbuffer.size() << "bytes";
         return "";
     }
-
-    // 4. 准备缓冲区并接收消息体
-    std::vector<char> buffer(len); // 使用 vector 动态分配缓冲区
-    ssize_t body_recv = ::recv(socketFd, buffer.data(), len, MSG_WAITALL);
-
-    if (body_recv <= 0) {
-         if (body_recv == 0) {
-             qDebug() << "Connection closed by peer while receiving body.";
-         } else if (errno == EINTR) {
-             qDebug() << "recv for body interrupted.";
-         } else {
-             qDebug() << "Failed to receive message body, errno:" << errno;
-         }
-        return "";
-    }
-     if (body_recv != len) {
-         qDebug() << "Failed to receive full message body, expected" << len << "received" << body_recv;
-         return "";
-     }
-
-
-    // 5. 从接收到的数据构造字符串并返回
-    return std::string(buffer.data(), len);
+    
+    // 跳过前8个字节的头部信息，只返回实际的JSON内容
+    std::string jsonContent = inputbuffer.substr(4);
+    qDebug() << "[NetworkClient] Extracted JSON content, length:" << jsonContent.size() << "bytes";
+    
+    return jsonContent;
 }
 
 void NetworkClient::disconnectFromServer(){
@@ -158,3 +115,4 @@ void NetworkClient::disconnectFromServer(){
 int NetworkClient::getSocketFd() const {
     return socketFd;
 }
+

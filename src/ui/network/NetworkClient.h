@@ -1,10 +1,12 @@
 #ifndef NETWORKCLIENT_H
 #define NETWORKCLIENT_H
 #include <string>
+#include <QObject>
 
-class NetworkClient {
+class NetworkClient :public QObject{
+    Q_OBJECT
 public:
-    NetworkClient();
+    NetworkClient(QObject* parent = nullptr);
     ~NetworkClient();
     bool connectToServer(const std::string& ip, int port);
     void sendMessage(const std::string& message);
@@ -13,8 +15,11 @@ public:
 
     int getSocketFd() const;
 
+signals:
+    void messageReceived(const std::string& message);
+    
 private:
     int socketFd;
-}; // <-- 在这里添加分号
+};
 
 #endif // NETWORKCLIENT_H
