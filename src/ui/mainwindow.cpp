@@ -20,6 +20,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QMessageBox>
+#include <QTimer>
 
 
 
@@ -43,11 +44,13 @@ MainWindow::MainWindow(NetworkClient* clientPtr, QWidget *parent)
         loadPersonasFromDatabase(); // 从数据库加载人设
     }
 
+
     // --- 连接信号与槽 (保持不变) ---
     connect(newPersonaButton, &QPushButton::clicked, this, &MainWindow::onNewPersonaClicked);
     connect(sendButton, &QPushButton::clicked, this, &MainWindow::onSendClicked);
     connect(personaListWidget, &QListWidget::itemClicked, this, &MainWindow::onPersonaSelected);
-  
+    connect(networkClient,&NetworkClient::messageReceived,this,&MainWindow::onServerResponseReceived);
+    
     // 如果列表不为空则默认选中第一项
     if (personaListWidget->count() > 0) {
         personaListWidget->setCurrentRow(0); // 选中第一项
@@ -283,9 +286,6 @@ void MainWindow::onPersonaSelected(QListWidgetItem *item)
     setWindowTitle(QString("AI 聊天系统 - 与 %1 对话中").arg(currentPersonaName));
     chatDisplayArea->clear(); // 清除之前的聊天记录
 
-    // **占位:** 这里应该:
-    // 1. 从后端请求'currentPersonaId'的聊天历史
-    // 2. 用获取的历史记录填充'chatDisplayArea'
     qDebug("选中人设: %s (ID: %s)", qUtf8Printable(currentPersonaName), qUtf8Printable(currentPersonaId)); // 调试输出
 
     // 示例: 添加欢迎消息
@@ -299,30 +299,76 @@ void MainWindow::onPersonaSelected(QListWidgetItem *item)
 
 void MainWindow::onSendClicked()
 {
-    QString message = messageInput->text().trimmed(); // 获取文本并去除首尾空格
+    QString message = messageInput->text().trimmed();
 
     if (message.isEmpty() || currentPersonaId.isEmpty()) {
-        // 不发送空消息或未选择人设时的消息
         return;
     }
 
-    // 1. 立即显示用户消息(右对齐)
-    addChatMessage("你", message, true); // 'true'表示用户消息
-
-    // 2. 发送消息到后端
-    int personaId = currentPersonaId.toInt();
-    sendMessageToServer(personaId, message);
+    addChatMessage("你", message, true);
+    sendMessageToServer(currentPersonaId.toInt(), message);
     
-    qDebug("发送消息给 %s: %s", qUtf8Printable(currentPersonaName), qUtf8Printable(message));
+    messageInput->clear();
+    messageInput->setFocus();
 
-    messageInput->clear(); // 清空输入框
-    messageInput->setFocus(); // 重新聚焦到输入框
 
-    QString aiResponse = receiveMessageFromServer();
-    addChatMessage(currentPersonaName, aiResponse, false);
+    sendButton->setEnabled(false);
+
+    chatDisplayArea->append("<div align='left' style='color: gray;'><i>AI 正在思考中...</i></div>");
+    chatDisplayArea->verticalScrollBar()->setValue(chatDisplayArea->verticalScrollBar()->maximum());
+
+    // 添加异步等待机制
+    QTimer* responseTimer = new QTimer(this);
+    responseTimer->setSingleShot(false); // 循环检查
+    connect(responseTimer, &QTimer::timeout, this, [this]() {
+        // 非阻塞尝试读取
+        std::string msg = networkClient->receiveMessage();
+        if (!msg.empty()) {
+            // 触发信号处理（会自动调用 onServerResponseReceived）
+            emit networkClient->messageReceived(msg);
+            sender()->deleteLater(); // 删除定时器
+        }
+    });
+    responseTimer->start(100); // 每100ms检查一次
+    // QString aiResponse = receiveMessageFromServer();
+    // addChatMessage(currentPersonaName, aiResponse, false);
 }
 
-// --- 辅助函数 ---
+void MainWindow::onServerResponseReceived(const std::string& serverResponse)
+{
+    QByteArray data = QByteArray::fromStdString(serverResponse);
+    QString jsonString = QString::fromUtf8(data);
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(jsonString.toUtf8(), &parseError);
+
+    QString aiResponseMessage = "[错误：无法解析服务器响应]";
+
+    if(parseError.error == QJsonParseError::NoError && doc.isObject()) {
+        QJsonObject obj = doc.object();
+        if(obj.contains("response") && obj.value("response").isString()){
+            aiResponseMessage = obj.value("response").toString();
+        }
+        else{
+            aiResponseMessage = "[错误：服务器响应格式不正确]";
+        }
+    }
+
+    // 删除"AI 正在思考中..."的提示
+    QTextCursor cursor = chatDisplayArea->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    cursor.movePosition(QTextCursor::StartOfBlock, QTextCursor::KeepAnchor);
+    if (cursor.selectedText().contains("AI 正在思考中...")) {
+        cursor.removeSelectedText();
+    }
+
+    // 添加AI回复
+    addChatMessage(currentPersonaName, aiResponseMessage, false);
+
+    // 重新启用发送按钮
+    sendButton->setEnabled(true);
+    messageInput->setFocus();
+}
+
 
 void MainWindow::addChatMessage(const QString &sender, const QString &message, bool isUserMessage)
 {
@@ -377,24 +423,30 @@ void MainWindow::sendMessageToServer(const int persona_id, const QString &messag
 
     QByteArray data = jsonString.toUtf8();
 
-    // 将 QByteArray 转换为 std::string 再发送
+    qDebug() << "发送消息到服务器: " << jsonString;
     networkClient->sendMessage(data.toStdString()); // <-- 修改这里
 
 }
 
+//无用了
 QString MainWindow::receiveMessageFromServer(){
-    // 接收 std::string
     std::string received_str = networkClient->receiveMessage();
-
-    // 将 std::string 转换为 QByteArray
     QByteArray data = QByteArray::fromStdString(received_str);
-
-    // 后续处理 QByteArray (解析 JSON) 保持不变
     QString jsonString = QString::fromUtf8(data);
-    QJsonDocument doc = QJsonDocument::fromJson(jsonString.toUtf8());
+
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(jsonString.toUtf8(), &parseError);
+
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        return "[错误：无法解析服务器响应]";
+    }
+
     QJsonObject obj = doc.object();
-    QString aiResponse = obj.value("response").toString();
-    return aiResponse;
+    if (!obj.contains("response") || !obj.value("response").isString()) {
+        return "[错误：服务器响应格式不正确]";
+    }
+
+    return obj.value("response").toString();
 }
 
 // 添加右键菜单显示函数
