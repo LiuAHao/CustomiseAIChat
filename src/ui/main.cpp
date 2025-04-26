@@ -27,7 +27,5 @@ int main(int argc, char *argv[])
 
     int result = a.exec();
 
-    // 网络连接的关闭将在 client 对象离开作用域时由其析构函数处理
-
     return result;
 }
