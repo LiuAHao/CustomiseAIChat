@@ -32,6 +32,7 @@ private slots:
     void onNewPersonaClicked();
     void onSendClicked();
     void onPersonaSelected(QListWidgetItem *item); // 列表选择槽函数
+    void onServerResponseReceived(const std::string& serverResponse); // 服务器响应槽函数
     void showPersonaContextMenu(const QPoint &pos); // 添加右键菜单函数声明
 
 private:
