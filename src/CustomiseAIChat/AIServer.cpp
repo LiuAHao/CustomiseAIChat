@@ -51,34 +51,74 @@ void AIServer::HandleMessage(spConnection conn,std::string message){
 }
 
 void AIServer::HandleSendComplete(spConnection conn){
-} 
+}
+
+void AIServer::Base64Encode(const std::string& input, std::string* output) {
+    static const std::string base64_chars =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789+/";
+
+    int i = 0, j = 0;
+    unsigned char char_array_3[3];
+    unsigned char char_array_4[4];
+    const auto* bytes_to_encode = reinterpret_cast<const unsigned char*>(input.data());
+    size_t in_len = input.size();
+
+    output->clear();
+    while (in_len--) {
+        char_array_3[i++] = *(bytes_to_encode++);
+        if (i == 3) {
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+
+            for(i = 0; i <4 ; i++)
+                *output += base64_chars[char_array_4[i]];
+            i = 0;
+        }
+    }
+
+    if (i) {
+        for(j = i; j < 3; j++)
+            char_array_3[j] = '\0';
+
+        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+        char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+        char_array_4[3] = char_array_3[2] & 0x3f;
+
+        for (j = 0; j < i + 1; j++)
+            *output += base64_chars[char_array_4[j]];
+
+        while((i++ < 3))
+            *output += '=';
+    }
+}
+
 
 //业务处理函数
 void AIServer::OnMessage(spConnection conn, std::string message) {
     printf("[客户端消息] %s\n", message.c_str());
-    
-    // 转义JSON中的特殊字符
-    std::string escaped_msg;
-    for(char c : message) {
-        if(c == '"' || c == '\\') escaped_msg += '\\';
-        escaped_msg += c;
-    }
-    // 构建Python命令
+
+    // 使用类作用域调用静态成员函数
+    std::string base64_msg;
+    AIServer::Base64Encode(message, &base64_msg); // 修改调用方式
+
     std::string python_cmd = "PYTHONPATH=/home/liuahao/AIChat/src/python/ python3 -c \""
+                           "import base64; "
                            "from ai_service import process_message; "
-                           "print(process_message('" + escaped_msg + "'))\"";
-    
+                           "msg = base64.b64decode('" + base64_msg + "').decode('utf-8'); "
+                           "print(process_message(msg))\"";
+
     std::string response = ExecPython(python_cmd.c_str(), "");
-    
+
     printf("[AI回应] %s\n", response.c_str());
-    char buffer[1024];
-    memset(buffer, 0, sizeof(buffer));
-    int len = strlen(response.c_str());
 
-    memcpy(buffer, &len, 4);
-    memcpy(buffer + 4, response.c_str(), len);
+    conn->send(response.data(), response.size());
 
-    conn->send(buffer, len + 4);
+    printf("[Server] Sent response (length: %zu bytes)\n", response.size());
 }
 
 std::string AIServer::ExecPython(const char* cmd, const char* input){
