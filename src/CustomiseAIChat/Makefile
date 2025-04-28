@@ -9,7 +9,7 @@ CXXFLAGS = -g -std=c++11 -I../net -I/usr/include/jsoncpp \
            -fPIC
 
 # 修改链接选项
-LDFLAGS = -lpthread -ljsoncpp -lQt5Core -lQt5Gui -lQt5Widgets -lQt5XcbQpa -lxcb-cursor
+LDFLAGS = -lpthread -ljsoncpp -lQt5Core -lQt5Gui -lQt5Widgets -lQt5XcbQpa -lxcb-cursor -lcurl
 
 # 目标文件 - 移除Client
 TARGETS = Server
@@ -45,7 +45,7 @@ clean:
 QT_CORE = -lQt5Core
 
 # 修改链接选项
-LDFLAGS = -lpthread -ljsoncpp -lQt5Core -lQt5Gui -lQt5Widgets -lQt5XcbQpa -lxcb-cursor
+LDFLAGS = -lpthread -ljsoncpp -lQt5Core -lQt5Gui -lQt5Widgets -lQt5XcbQpa -lxcb-cursor -lcurl
 LIBS = $(QT_CORE) $(QT_NETWORK) -ljsoncpp
 
 # 添加Qt头文件路径
