@@ -144,6 +144,7 @@ void Connection::sendinloop(std::string message) {
 
 bool Connection::timeout(time_t now,int val)
 {
-    return now - lastatime_.toint() > 100;
+    //return now - lastatime_.toint() > 100;  //设置超时时间
+    return false;
 }
 
