@@ -12,10 +12,10 @@ public:
     Database(QString dbName, QObject *parent = nullptr);
     ~Database();
     bool initDatabase();
-    bool addPersona(const QString &name, const QString &description);
+    int addPersona(const QString &name, const QString &description);
     bool deletePersona(int personaId);
     bool addMessage(int personaId, const QString &sender, const QString &message);
-    QVector<QVector<QString>> getChatHistory(const QString &personaId);
+    QVector<QVector<QString>> getChatHistory(int personaId);
     QVector<QPair<int, QString>> getAllPersonas();
     QPair<QString, QString> getPersonaInfo(int personaId);
 signals:
@@ -25,4 +25,5 @@ signals:
 
 private:
     QSqlDatabase db;
+    QString dbname;
 };

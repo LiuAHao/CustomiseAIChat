@@ -1,7 +1,7 @@
 #include "database.h"
 
 
-Database::Database(QString dbName, QObject *parent) : QObject(parent){
+Database::Database(QString dbName, QObject *parent) : dbname(dbName), QObject(parent){
     db = QSqlDatabase::addDatabase("QSQLITE");
 }
 
@@ -13,7 +13,7 @@ bool Database::initDatabase(){
         dbDir.mkpath(".");
     }
     
-    QString dbPath = dbDirPath + "/aichat.db";
+    QString dbPath = dbDirPath + "/" + dbname;
     qDebug() << "数据库存储位置:" << dbPath;
     
     db.setDatabaseName(dbPath);
@@ -44,16 +44,21 @@ Database::~Database(){
     db.close();
 }
 
-bool Database::addPersona(const QString &name, const QString &description){
+int Database::addPersona(const QString &name, const QString &description){
     QSqlQuery query;
     query.prepare("INSERT INTO personas (name, description) VALUES (?, ?)");
     query.addBindValue(name);
     query.addBindValue(description);
+    
     if(!query.exec()){
         qWarning() << "添加人设失败" << query.lastError().text();
-        return false;
+        return -1; // 返回-1表示添加失败
     }
-    return true;
+    
+    // 获取新插入记录的ID
+    int newId = query.lastInsertId().toInt();
+    qDebug() << "添加人设成功，ID:" << newId;
+    return newId;
 }
 
 bool Database::deletePersona(int personaId){
@@ -82,7 +87,7 @@ bool Database::addMessage(int personaId, const QString &sender, const QString &m
     return true;
 }
 
-QVector<QVector<QString>> Database::getChatHistory(const QString &personaId){
+QVector<QVector<QString>> Database::getChatHistory(int personaId){
     QVector<QVector<QString>> chatHistory;
 
     QSqlQuery query;
