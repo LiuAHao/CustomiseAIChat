@@ -41,8 +41,23 @@
 ./Client <服务器IP> <端口号>
 ```
 ### 前端展示
-![前端图](
-![image](docs/images/image.png)
+![主界面](
+![image](docs/images/主界面.png)
+
+![思考](
+![image](docs/images/思考.png)
+
+![回答](
+![image](docs/images/回答.png)
+
+![新建人设](
+![image](docs/images/新建人设.png)
+
+![删除](
+![image](docs/images/删除.png)
+
+![换人设](
+![image](docs/images/换人设.png)
 
 ### 主要消息
 
@@ -69,4 +84,4 @@ CREATE TABLE conversations (
     persona_id TEXT NOT NULL,
     title TEXT NOT NULL
 );
- ```
+
