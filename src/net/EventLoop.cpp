@@ -127,18 +127,6 @@ void EventLoop::handletimer()
     else
     {
         time_t now = time(0);
-        //printf("EventLoop::handletimer() threadid is %d fd:",(int)syscall(SYS_gettid));
-        // for(auto conn:conns_)
-        // {
-        //     printf("%d ",conn.first);
-        //     if(conn.second->timeout(now,10))
-        //     {
-                
-        //         timercallback_(conn.first);       //从TcpServer中删去Connection
-        //         conns_.erase(conn.first);       //超时则删去Connection  //Connection的释放出现段错误
-        //     }
-        // }
-        //上面的代码因为map的erase函数会段错误错误，怀疑是for迭代使得conn指针指向空内存
         std::map<int,spConnection>::iterator it = conns_.begin();  
         while(it != conns_.end())  
         {  
@@ -168,3 +156,4 @@ void EventLoop::settimercallback(std::function<void(int)> fn)
 {
     timercallback_ = fn;
 } 
+

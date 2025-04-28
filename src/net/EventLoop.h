@@ -36,7 +36,10 @@ private:
     std::mutex mmutex_;         //保护conns_的互斥锁
 
     std::map<int,spConnection> conns_;       //存放运行事件循环中的Connection对象
+
     std::function<void(int)> timercallback_;    //超时删除回调函数
+    std::function<void(int)> closecallback_;    //关闭连接回调函数
+
     std::atomic_bool stop_;                 //停止运行标志位，退出死循环
 public:
     EventLoop(bool mainloop,int timevl_ = 30,int timeout_ = 80);    
@@ -57,7 +60,7 @@ public:
 
     void handletimer();             //定时器的回调函数  
 
-    void newconnection(spConnection conn);  //把Connection存放到conn_中
+    void newconnection(spConnection conn);  //把Connection存放到conns_中
     void settimercallback(std::function<void(int)> fn);
 
 };
