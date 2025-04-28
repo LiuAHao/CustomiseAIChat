@@ -36,10 +36,18 @@
 ## Qt前端使用说明
 
 ### 启动方式
-1. 通过客户端程序启动：
+1. 启动c++网络服务端程序：
 ```bash
-./Client <服务器IP> <端口号>
+./Server <服务器IP> <端口号>
 ```
+2. 启动python服务端调用（切换到python文件夹）：
+```bash
+python3 ai_server.py
+```
+
+3. 通过qt启动客户端：
+默认绑定 "192.168.232.129:5085"
+
 ### 前端展示
 ![主界面](
 ![image](docs/images/主界面.png)
@@ -61,11 +69,11 @@
 
 ### 主要消息
 
-客户端→服务端 发送聊天消息 chat_response
+客户端→服务端 发送聊天消息 chat_response + persona_descripion
 
-服务端→客户端 返回AI响应 persona_list
+服务端AI api调用
 
-服务端→客户端 返回人设列表
+服务端→客户端 返回AI响应 ai_response
 
 ### 数据库设计
 
@@ -84,4 +92,6 @@ CREATE TABLE conversations (
     persona_id TEXT NOT NULL,
     title TEXT NOT NULL
 );
+
+
 
