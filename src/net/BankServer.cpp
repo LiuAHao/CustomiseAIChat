@@ -79,12 +79,6 @@ void BankServer::HandleSendComplete(spConnection conn)
 
 } 
 
-// void EchoServer::HandleEpollTimeOut(EventLoop* loop)
-// {
-//     std::cout<<"EchoServer timeout.\n"; 
-
-// }
-
 bool getxmlbuffer(const std::string& xmlbuffer,const std::string& fieldname,std::string& value,const int ilen = 0)
 {
     std::string start = "<" + fieldname + ">";  //数据项开始标签
