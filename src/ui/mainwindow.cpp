@@ -21,16 +21,16 @@
 #include <QAction>
 #include <QMessageBox>
 #include <QTimer>
-
-
+#include <QCoreApplication>
 
 #include <QDebug> // 确保包含 QDebug
 
 // 匹配头文件中的新构造函数声明
 MainWindow::MainWindow(NetworkClient* clientPtr, QWidget *parent)
     : QMainWindow(parent)
-    , networkClient(clientPtr) // <-- 使用传入的指针初始化 networkClient
-    // , networkClient(new NetworkClient(this)) // <-- 移除这行错误的初始化
+    , networkClient(clientPtr)
+    , networkPollTimer(new QTimer(this))
+    , waitingForResponse(false)
 {
 
     // 数据库初始化和 UI 设置保持不变
@@ -45,13 +45,21 @@ MainWindow::MainWindow(NetworkClient* clientPtr, QWidget *parent)
     }
 
 
-    // --- 连接信号与槽 (保持不变) ---
     connect(newPersonaButton, &QPushButton::clicked, this, &MainWindow::onNewPersonaClicked);
     connect(sendButton, &QPushButton::clicked, this, &MainWindow::onSendClicked);
     connect(personaListWidget, &QListWidget::itemClicked, this, &MainWindow::onPersonaSelected);
-    connect(networkClient,&NetworkClient::messageReceived,this,&MainWindow::onServerResponseReceived);
     
-    // 如果列表不为空则默认选中第一项
+    connect(networkClient, &NetworkClient::messageReceived,
+            this, &MainWindow::onServerResponseReceived);
+    
+    connect(networkClient, &NetworkClient::connectionStateChanged,
+            this, &MainWindow::onConnectionStateChanged);
+    
+    // 设置轮询定时器，每100毫秒检查一次网络响应
+    connect(networkPollTimer, &QTimer::timeout, this, &MainWindow::checkNetworkResponse);
+    networkPollTimer->setInterval(100);  // 100ms
+    networkPollTimer->start();
+    
     if (personaListWidget->count() > 0) {
         personaListWidget->setCurrentRow(0); // 选中第一项
         onPersonaSelected(personaListWidget->item(0)); // 触发选择逻辑
@@ -64,7 +72,6 @@ MainWindow::MainWindow(NetworkClient* clientPtr, QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    // Qt会自动删除有父对象的子控件
 }
 
 void MainWindow::setupUI()
@@ -248,9 +255,15 @@ void MainWindow::onNewPersonaClicked()
         QString personaDesc = descEdit.toPlainText().trimmed();
 
         if (!personaName.isEmpty()) {
-            if (db->addPersona(personaName, personaDesc)) {
-                // 添加成功，更新UI
-                personaListWidget->addItem(personaName);
+            int personaId = db->addPersona(personaName, personaDesc);
+            if (personaId > 0) {
+                // 添加成功，创建列表项并绑定ID
+                QListWidgetItem* item = new QListWidgetItem(personaName, personaListWidget);
+                item->setData(Qt::UserRole, personaId); // 设置人设ID
+                
+                // 自动选中新添加的项
+                personaListWidget->setCurrentItem(item);
+                onPersonaSelected(item);
             } else {
                 QMessageBox::warning(this, "警告", "添加人设失败");
             }
@@ -311,33 +324,23 @@ void MainWindow::onSendClicked()
     messageInput->clear();
     messageInput->setFocus();
 
-
     sendButton->setEnabled(false);
+    waitingForResponse = true;
 
     chatDisplayArea->append("<div align='left' style='color: gray;'><i>AI 正在思考中...</i></div>");
     chatDisplayArea->verticalScrollBar()->setValue(chatDisplayArea->verticalScrollBar()->maximum());
-
-    // 添加异步等待机制
-    QTimer* responseTimer = new QTimer(this);
-    responseTimer->setSingleShot(false); // 循环检查
-    connect(responseTimer, &QTimer::timeout, this, [this]() {
-        // 非阻塞尝试读取
-        std::string msg = networkClient->receiveMessage();
-        if (!msg.empty()) {
-            // 触发信号处理（会自动调用 onServerResponseReceived）
-            emit networkClient->messageReceived(msg);
-            sender()->deleteLater(); // 删除定时器
-        }
-    });
-    responseTimer->start(100); // 每100ms检查一次
-    // QString aiResponse = receiveMessageFromServer();
-    // addChatMessage(currentPersonaName, aiResponse, false);
 }
 
 void MainWindow::onServerResponseReceived(const std::string& serverResponse)
 {
+    qDebug() << "[MainWindow] Server response received, length:" << serverResponse.size() << "bytes";
+    
+    // 重置等待响应的状态
+    waitingForResponse = false;
+    
     QByteArray data = QByteArray::fromStdString(serverResponse);
     QString jsonString = QString::fromUtf8(data);
+        
     QJsonParseError parseError;
     QJsonDocument doc = QJsonDocument::fromJson(jsonString.toUtf8(), &parseError);
 
@@ -345,12 +348,16 @@ void MainWindow::onServerResponseReceived(const std::string& serverResponse)
 
     if(parseError.error == QJsonParseError::NoError && doc.isObject()) {
         QJsonObject obj = doc.object();
+        
         if(obj.contains("response") && obj.value("response").isString()){
             aiResponseMessage = obj.value("response").toString();
         }
         else{
             aiResponseMessage = "[错误：服务器响应格式不正确]";
         }
+    } else {
+        qDebug() << "[MainWindow] JSON parse error:" << parseError.errorString() 
+                << "at offset" << parseError.offset;
     }
 
     // 删除"AI 正在思考中..."的提示
@@ -359,6 +366,7 @@ void MainWindow::onServerResponseReceived(const std::string& serverResponse)
     cursor.movePosition(QTextCursor::StartOfBlock, QTextCursor::KeepAnchor);
     if (cursor.selectedText().contains("AI 正在思考中...")) {
         cursor.removeSelectedText();
+    } else {
     }
 
     // 添加AI回复
@@ -367,6 +375,9 @@ void MainWindow::onServerResponseReceived(const std::string& serverResponse)
     // 重新启用发送按钮
     sendButton->setEnabled(true);
     messageInput->setFocus();
+    
+    // 强制处理事件，确保UI更新
+    QCoreApplication::processEvents();
 }
 
 
@@ -402,6 +413,8 @@ void MainWindow::loadPersonasFromDatabase(){
         
         // 存储人设ID到item的数据中
         item->setData(Qt::UserRole, persona.first);
+        
+        qDebug() << "加载人设:" << persona.second << "(ID:" << persona.first << ")";
     }
 }
 
@@ -424,29 +437,8 @@ void MainWindow::sendMessageToServer(const int persona_id, const QString &messag
     QByteArray data = jsonString.toUtf8();
 
     qDebug() << "发送消息到服务器: " << jsonString;
-    networkClient->sendMessage(data.toStdString()); // <-- 修改这里
+    networkClient->sendMessage(data.toStdString());
 
-}
-
-//无用了
-QString MainWindow::receiveMessageFromServer(){
-    std::string received_str = networkClient->receiveMessage();
-    QByteArray data = QByteArray::fromStdString(received_str);
-    QString jsonString = QString::fromUtf8(data);
-
-    QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(jsonString.toUtf8(), &parseError);
-
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        return "[错误：无法解析服务器响应]";
-    }
-
-    QJsonObject obj = doc.object();
-    if (!obj.contains("response") || !obj.value("response").isString()) {
-        return "[错误：服务器响应格式不正确]";
-    }
-
-    return obj.value("response").toString();
 }
 
 // 添加右键菜单显示函数
@@ -496,4 +488,32 @@ void MainWindow::deletePersona(int personaId)
             QMessageBox::warning(this, "错误", "删除人设失败");
         }
     }
+}
+
+// 新增：检查网络响应
+void MainWindow::checkNetworkResponse()
+{
+    if (waitingForResponse) {
+        // 调用 NetworkClient 的 checkForResponse 方法
+        networkClient->checkForResponse();
+    }
+}
+
+void MainWindow::onConnectionStateChanged(bool connected) {
+    if (connected) {
+        addSystemMessage("服务器连接已重新建立");
+        sendButton->setEnabled(true);
+    } else {
+        addSystemMessage("服务器连接已断开");
+        // 不禁用发送按钮，因为我们有自动重连机制
+    }
+}
+
+void MainWindow::addSystemMessage(const QString &message) {
+    QString formattedMessage = QString("<div align='center' style='color: gray;'><i>%1</i></div>")
+                                   .arg(message); // 居中显示系统消息
+    chatDisplayArea->append(formattedMessage);
+    
+    // 自动滚动到底部
+    chatDisplayArea->verticalScrollBar()->setValue(chatDisplayArea->verticalScrollBar()->maximum());
 }

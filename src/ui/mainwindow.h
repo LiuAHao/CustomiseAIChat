@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QString> // 包含QString头文件
+#include <QTimer>  // 添加QTimer头文件
 #include "../db/database.h"
 #include "network/NetworkClient.h" // 包含头文件
 // 前置声明以减少头文件依赖
@@ -34,12 +35,15 @@ private slots:
     void onPersonaSelected(QListWidgetItem *item); // 列表选择槽函数
     void onServerResponseReceived(const std::string& serverResponse); // 服务器响应槽函数
     void showPersonaContextMenu(const QPoint &pos); // 添加右键菜单函数声明
+    void checkNetworkResponse(); // 检查网络响应
+    void onConnectionStateChanged(bool connected); // 处理连接状态变化
 
 private:
     // 辅助函数：初始化UI
     void setupUI();
     // 辅助函数：添加消息到聊天显示区域
     void addChatMessage(const QString &sender, const QString &message, bool isUserMessage);
+    void addSystemMessage(const QString &message); // 添加系统消息
     void deletePersona(int personaId); // 添加删除人设函数声明 
     void loadPersonasFromDatabase();
     void sendMessageToServer(const int persona_id, const QString &message);
@@ -53,6 +57,10 @@ private:
     Database *db;
     //网络 (成员变量保持不变)
     NetworkClient *networkClient;
+    
+    // 添加定时器用于轮询网络响应
+    QTimer *networkPollTimer;
+    bool waitingForResponse; // 是否正在等待响应
 
     // --- UI组件 ---
     QSplitter *mainSplitter;
