@@ -51,7 +51,7 @@ int main(int argc,char *argv[]){
     signal(SIGINT,Stop);
 
     // 启动Python服务器
-    StartPythonServer();
+    //StartPythonServer();
     
     // 启动C++服务器
     aiserver = new AIServer(argv[1],atoi(argv[2]),10,5);

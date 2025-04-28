@@ -15,14 +15,11 @@ int main(int argc, char *argv[])
         return -1; // 直接退出
     }
 
-    // 连接成功后，再继续创建和显示 Qt 应用窗口
-    qDebug() << "已连接到服务器" << argv[1] << ":" << argv[2];
+    qDebug() << "已连接到服务器" << "192.168.232.129" << ":" << "5085";
 
     QApplication a(argc, argv); // 创建应用实例
 
-    // 将 client 对象传递给 MainWindow 的构造函数
-    MainWindow w(&client);      // <-- 修改这里，传递 client
-
+    MainWindow w(&client); 
     w.show();                  // 显示主窗口
 
     int result = a.exec();
