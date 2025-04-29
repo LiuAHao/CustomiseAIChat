@@ -49,22 +49,22 @@ python3 ai_server.py
 默认绑定 "192.168.232.129:5085"
 
 ### 前端展示
-![主界面](
+主界面
 ![image](docs/images/主界面.png)
 
-![思考](
+思考
 ![image](docs/images/思考.png)
 
-![回答](
+回答
 ![image](docs/images/回答.png)
 
-![新建人设](
+新建人设
 ![image](docs/images/新建人设.png)
 
-![删除](
+删除
 ![image](docs/images/删除.png)
 
-![换人设](
+换人设
 ![image](docs/images/换人设.png)
 
 ### 主要消息
