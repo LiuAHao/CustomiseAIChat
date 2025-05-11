@@ -480,7 +480,6 @@ void MainWindow::sendMessageToServer(const int persona_id, const QString &messag
         QVector<QString> lastMessage = recentMessages.last();
         if (lastMessage[0] == "你" && lastMessage[1] == message) {
             recentMessages.removeLast();
-            qDebug() << "从历史记录中移除重复的当前消息";
         }
     }
     
