@@ -16,6 +16,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.db
 
 # 项目特定的二进制文件
 /Server
