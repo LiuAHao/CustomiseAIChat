@@ -17,11 +17,13 @@
 #include <QLabel>
 #include <QJsonObject>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QMenu>
 #include <QAction>
 #include <QMessageBox>
 #include <QTimer>
 #include <QCoreApplication>
+#include <QTextBlock>
 
 #include <QDebug> // 确保包含 QDebug
 
@@ -301,13 +303,34 @@ void MainWindow::onPersonaSelected(QListWidgetItem *item)
 
     qDebug("选中人设: %s (ID: %s)", qUtf8Printable(currentPersonaName), qUtf8Printable(currentPersonaId)); // 调试输出
 
-    // 示例: 添加欢迎消息
-    addChatMessage(currentPersonaName, QString("你好！我是%1，我们可以开始聊天了。").arg(currentPersonaName), false);
+    // 加载历史聊天记录
+    loadChatHistory(personaId);
 
     // 启用输入
     messageInput->setEnabled(true);
     sendButton->setEnabled(true);
     messageInput->setFocus(); // 将焦点设置到输入框
+}
+
+void MainWindow::loadChatHistory(int personaId) {
+    // 查询数据库获取聊天记录
+    auto chatHistory = db->getChatHistory(personaId);
+    
+    if (chatHistory.isEmpty()) {
+        // 如果没有聊天记录，显示欢迎消息
+        addChatMessage(currentPersonaName, QString("你好！我是%1，我们可以开始聊天了。").arg(currentPersonaName), false, false);
+        return;
+    }
+    
+    // 显示聊天记录
+    for (const auto &record : chatHistory) {
+        QString sender = record[0];
+        QString message = record[1];
+        bool isUserMessage = (sender == "你");
+        
+        // 添加历史消息，但不保存到数据库
+        addChatMessage(sender, message, isUserMessage, false);
+    }
 }
 
 void MainWindow::onSendClicked()
@@ -318,7 +341,8 @@ void MainWindow::onSendClicked()
         return;
     }
 
-    addChatMessage("你", message, true);
+    // 发送消息并保存到数据库
+    addChatMessage("你", message, true, true);
     sendMessageToServer(currentPersonaId.toInt(), message);
     
     messageInput->clear();
@@ -327,7 +351,8 @@ void MainWindow::onSendClicked()
     sendButton->setEnabled(false);
     waitingForResponse = true;
 
-    chatDisplayArea->append("<div align='left' style='color: gray;'><i>AI 正在思考中...</i></div>");
+    // 添加一个带有特殊ID的思考中提示，方便后续删除
+    chatDisplayArea->append("<div id='thinking-indicator' align='left' style='color: gray;'><i>AI 正在思考中...</i></div>");
     chatDisplayArea->verticalScrollBar()->setValue(chatDisplayArea->verticalScrollBar()->maximum());
 }
 
@@ -360,17 +385,33 @@ void MainWindow::onServerResponseReceived(const std::string& serverResponse)
                 << "at offset" << parseError.offset;
     }
 
-    // 删除"AI 正在思考中..."的提示
-    QTextCursor cursor = chatDisplayArea->textCursor();
-    cursor.movePosition(QTextCursor::End);
-    cursor.movePosition(QTextCursor::StartOfBlock, QTextCursor::KeepAnchor);
-    if (cursor.selectedText().contains("AI 正在思考中...")) {
-        cursor.removeSelectedText();
-    } else {
+    // 完全清除思考中提示 - 使用QTextDocument的API查找和删除
+    QTextDocument *doc2 = chatDisplayArea->document();
+    QTextCursor cursor(doc2);
+    cursor.beginEditBlock();
+    
+    // 从文档开始查找
+    cursor.movePosition(QTextCursor::Start);
+    while (!cursor.isNull() && !cursor.atEnd()) {
+        // 使用QTextBlock查找包含指定文本的行
+        QTextBlock block = cursor.block();
+        if (block.text().contains("AI 正在思考中")) {
+            // 选中整个块
+            cursor.select(QTextCursor::BlockUnderCursor);
+            // 删除所选内容
+            cursor.removeSelectedText();
+            // 如果删除后出现空行，也删除空行
+            if (cursor.block().text().isEmpty()) {
+                cursor.deleteChar();
+            }
+            break;
+        }
+        cursor.movePosition(QTextCursor::NextBlock);
     }
+    cursor.endEditBlock();
 
-    // 添加AI回复
-    addChatMessage(currentPersonaName, aiResponseMessage, false);
+    // 添加AI回复并保存到数据库
+    addChatMessage(currentPersonaName, aiResponseMessage, false, true);
 
     // 重新启用发送按钮
     sendButton->setEnabled(true);
@@ -381,13 +422,13 @@ void MainWindow::onServerResponseReceived(const std::string& serverResponse)
 }
 
 
-void MainWindow::addChatMessage(const QString &sender, const QString &message, bool isUserMessage)
+void MainWindow::addChatMessage(const QString &sender, const QString &message, bool isUserMessage, bool saveToDatabase)
 {
     // 使用HTML进行基本格式化(对齐，加粗发送者)
     QString formattedMessage;
     if (isUserMessage) {
         // 用户消息: 右对齐
-        formattedMessage = QString("<div align='right'><b>%1:</b> %2</div>")
+        formattedMessage = QString("<div align='left'><b>%1:</b> %2</div>")
                                .arg(sender) // 发送者("你")
                                .arg(message.toHtmlEscaped()); // 转义消息中的HTML
     } else {
@@ -398,6 +439,11 @@ void MainWindow::addChatMessage(const QString &sender, const QString &message, b
     }
 
     chatDisplayArea->append(formattedMessage); // 添加新段落
+
+    // 保存消息到数据库
+    if (saveToDatabase && !currentPersonaId.isEmpty()) {
+        db->addMessage(currentPersonaId.toInt(), sender, message);
+    }
 
     // 自动滚动到底部
     chatDisplayArea->verticalScrollBar()->setValue(chatDisplayArea->verticalScrollBar()->maximum());
@@ -425,20 +471,50 @@ void MainWindow::sendMessageToServer(const int persona_id, const QString &messag
         return;
     }
 
-    QJsonObject messageObj;
-    messageObj.insert("personaId", persona_id);
-    messageObj.insert("persona", personaInfo.first);
-    messageObj.insert("personaDesc", personaInfo.second);
-    messageObj.insert("message", message);
+    // 获取最近的5条聊天记录（不包括当前新消息）
+    QVector<QVector<QString>> recentMessages = db->getRecentChatHistory(persona_id, 5);
+    
+    // 检查聊天历史的最后一条消息是否与当前消息相同（排除重复）
+    if (!recentMessages.isEmpty()) {
+        // 如果最后一条是用户消息并且内容与当前消息相同，则移除它
+        QVector<QString> lastMessage = recentMessages.last();
+        if (lastMessage[0] == "你" && lastMessage[1] == message) {
+            recentMessages.removeLast();
+            qDebug() << "从历史记录中移除重复的当前消息";
+        }
+    }
+    
+    // 计算历史记录总长度
+    int historyLength = 0;
+    for (const auto &record : recentMessages) {
+        historyLength += record[1].length();
+    }
+    qDebug() << "历史聊天记录长度:" << historyLength << "字符";
 
-    QJsonDocument doc(messageObj);
-    QString jsonString = doc.toJson(QJsonDocument::Compact);
+    // 构建聊天历史数组
+    QJsonArray chatHistoryArray;
+    for (const auto &record : recentMessages) {
+        QJsonObject messageObj;
+        messageObj["sender"] = record[0];  // sender
+        messageObj["content"] = record[1]; // message
+        chatHistoryArray.append(messageObj);
+    }
 
-    QByteArray data = jsonString.toUtf8();
+    // 使用Qt的JSON库处理
+    QJsonObject rootObj;
+    rootObj["personaId"] = persona_id;
+    rootObj["persona"] = personaInfo.first;
+    rootObj["personaDesc"] = personaInfo.second;
+    rootObj["message"] = message;
+    rootObj["chatHistory"] = chatHistoryArray;
+    rootObj["historyLength"] = historyLength;
 
-    qDebug() << "发送消息到服务器: " << jsonString;
-    networkClient->sendMessage(data.toStdString());
-
+    // 生成JSON数据
+    QJsonDocument doc(rootObj);
+    QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
+    
+    // 发送数据
+    networkClient->sendMessage(jsonData.toStdString());
 }
 
 // 添加右键菜单显示函数

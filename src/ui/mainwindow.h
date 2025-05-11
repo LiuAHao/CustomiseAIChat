@@ -42,10 +42,11 @@ private:
     // 辅助函数：初始化UI
     void setupUI();
     // 辅助函数：添加消息到聊天显示区域
-    void addChatMessage(const QString &sender, const QString &message, bool isUserMessage);
+    void addChatMessage(const QString &sender, const QString &message, bool isUserMessage, bool saveToDatabase);
     void addSystemMessage(const QString &message); // 添加系统消息
     void deletePersona(int personaId); // 添加删除人设函数声明 
     void loadPersonasFromDatabase();
+    void loadChatHistory(int personaId); // 加载聊天历史记录
     void sendMessageToServer(const int persona_id, const QString &message);
     QString receiveMessageFromServer();
 
