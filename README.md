@@ -93,5 +93,57 @@ CREATE TABLE conversations (
     title TEXT NOT NULL
 );
 
+## Web版设计思路
+
+### 1. 后端调整 (C++服务端)
+- **通信协议**: 
+    - 增加WebSocket支持，用于实时聊天消息传递。
+    - 提供HTTP/RESTful API接口，用于管理人设、获取聊天记录等非实时操作。
+- **API设计**:
+    - `/personas` (GET): 获取所有人设列表。
+    - `/personas` (POST): 新建人设。
+    - `/personas/{id}` (GET): 获取特定人设信息。
+    - `/personas/{id}` (DELETE): 删除特定人设。
+    - `/chat/{persona_id}` (GET): 获取特定人设的聊天记录（可分页）。
+    - WebSocket端点 `/ws/chat/{persona_id}`: 用于实时发送和接收聊天消息。
+- **认证与授权**: (可选，根据需求) 如果需要用户系统，则需要添加用户认证和授权机制。
+
+### 2. Web前端设计
+- **技术选型**: 
+    - **核心库**: HTML, CSS, JavaScript。
+    - **前端框架**: 考虑使用React, Vue, 或Angular等现代前端框架，以提高开发效率和代码可维护性。
+    - **状态管理**: Redux, Vuex, 或其他状态管理库，用于管理人设列表、当前聊天、用户信息等。
+    - **UI组件库**: Material UI, Ant Design, Bootstrap等，快速构建美观的界面。
+- **主要界面模块**:
+    - **人设管理界面**: 
+        - 列表展示所有人设。
+        - 提供新建、编辑、删除人设的功能。
+    - **聊天界面**: 
+        - 左侧人设列表，可切换聊天对象。
+        - 右侧聊天窗口，显示聊天记录。
+        - 底部输入框，用于发送消息。
+    - **用户登录/注册界面**: (可选，如果需要用户系统)。
+- **实时通信**: 使用WebSocket与后端建立长连接，实时收发聊天消息。
+- **API调用**: 使用`fetch`或`axios`等库调用后端的HTTP API进行人设管理和历史记录获取。
+
+### 3. Python AI服务
+- **保持不变**: Python Flask服务可以继续作为AI核心逻辑处理单元。
+- **接口调整**: C++后端通过HTTP请求与Python服务通信的模式可以保持不变。
+
+### 4. 数据库
+- **保持不变**: 当前的SQLite数据库设计可以继续使用，C++后端负责与数据库交互。
+
+### 5. 部署
+- **C++后端**: 编译为可执行文件，部署到服务器。
+- **Web前端**: 构建为静态文件 (HTML, CSS, JS)，可以通过Nginx等Web服务器提供服务，或者集成到C++后端（例如使用C++的HTTP库提供静态文件服务）。
+- **Python AI服务**: 通过Gunicorn/uWSGI等部署在服务器上，并确保C++后端可以访问到它。
+
+### 消息协议 (Web版)
+- **HTTP API (JSON)**:
+    - 请求和响应主体都使用JSON格式。
+- **WebSocket (JSON)**:
+    - 客户端发送消息: `{"type": "user_message", "persona_id": 1, "message": "你好"}`
+    - 服务端推送AI回复: `{"type": "ai_response", "persona_name": "AI助手", "message": "你好，有什么可以帮助你的吗？"}`
+    - 服务端推送系统消息: `{"type": "system_message", "message": "人设已更新"}`
 
 
