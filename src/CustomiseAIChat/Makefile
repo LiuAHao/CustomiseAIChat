@@ -1,15 +1,10 @@
 # 编译器设置
 CXX = g++
 # 修改编译器设置
-CXXFLAGS = -g -std=c++11 -I../net -I/usr/include/jsoncpp \
-           -I/usr/include/x86_64-linux-gnu/qt5 \
-           -I/usr/include/x86_64-linux-gnu/qt5/QtCore \
-           -I/usr/include/x86_64-linux-gnu/qt5/QtGui \
-           -I/usr/include/x86_64-linux-gnu/qt5/QtWidgets \
-           -fPIC
+CXXFLAGS = -g -std=c++11 -I../net -I/usr/include/jsoncpp -fPIC
 
 # 修改链接选项
-LDFLAGS = -lpthread -ljsoncpp -lQt5Core -lQt5Gui -lQt5Widgets -lQt5XcbQpa -lxcb-cursor -lcurl
+LDFLAGS = -lpthread -ljsoncpp -lcurl
 
 # 目标文件 - 移除Client
 TARGETS = Server
@@ -40,13 +35,6 @@ clean:
 	rm -f $(TARGETS)
 
 .PHONY: all clean
-
-# 添加Qt核心模块
-QT_CORE = -lQt5Core
-
-# 修改链接选项
-LDFLAGS = -lpthread -ljsoncpp -lQt5Core -lQt5Gui -lQt5Widgets -lQt5XcbQpa -lxcb-cursor -lcurl
-LIBS = $(QT_CORE) $(QT_NETWORK) -ljsoncpp
 
 # 添加Qt头文件路径
 INCLUDES = -I/usr/include/qt5 -I/usr/include/qt5/QtCore

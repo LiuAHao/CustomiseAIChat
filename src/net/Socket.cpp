@@ -50,13 +50,13 @@ void Socket::setreuseaddr(bool on)
 void Socket::setreuseport(bool on)
 {
     int optval = on?1:0;
-    ::setsockopt(fd_,SOL_SOCKET,TCP_NODELAY,&optval,sizeof(optval));
+    ::setsockopt(fd_,SOL_SOCKET,SO_REUSEPORT,&optval,sizeof(optval));
 }
 
 void Socket::settcpnodelay(bool on)
 {
     int optval = on?1:0;
-    ::setsockopt(fd_,SOL_SOCKET,SO_REUSEPORT,&optval,sizeof(optval));
+    ::setsockopt(fd_,IPPROTO_TCP,TCP_NODELAY,&optval,sizeof(optval));
 }
 
 void Socket::setkeepalive(bool on)

@@ -22,6 +22,12 @@ __pycache__/
 /Server
 /Client
 /AIServer
+/src/CustomiseAIChat/Server
+/src/net/client
+/src/net/bankclient
+/src/net/tcpepoll
+/src/net/bankserver
+/src/net/echoclient
 
 # 开发环境文件
 .vscode/
@@ -40,6 +46,8 @@ Thumbs.db
 # 依赖目录
 venv/
 env/
+.venv/
+.python-version
 *.egg-info/
 dist/
 build/
