@@ -1,50 +1,25 @@
-cmake_minimum_required(VERSION 3.10) # 或更高版本
-project(AIChat LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.10)
+project(CustomiseAIChat LANGUAGES CXX)
 
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC ON)
-
-set(CMAKE_CXX_STANDARD 11) # 或更高版本
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# 查找 Qt 包
-find_package(Qt5 COMPONENTS Core Gui Widgets REQUIRED)
+# ===== 网络库（静态库） =====
+add_subdirectory(src/net)
 
-# 定义源文件列表
-set(SOURCES
-    src/ui/main.cpp
-    src/ui/mainwindow.cpp
-    src/ui/Network/NetworkClient.cpp # 确保这一行存在且正确
-)
+# ===== 后端服务器 =====
+add_subdirectory(src/server)
 
+# ===== Qt客户端（可选，需要Qt环境） =====
+option(BUILD_CLIENT "构建Qt客户端" OFF)
+if(BUILD_CLIENT)
+    set(CMAKE_AUTOMOC ON)
+    set(CMAKE_AUTORCC ON)
+    set(CMAKE_AUTOUIC ON)
 
-set(HEADERS
-    src/ui/mainwindow.h
-    src/ui/Network/NetworkClient.h   # 确保这一行存在且正确
-)
+    find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Sql)
+    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Sql)
 
-# 定义 UI 文件 (如果使用 .ui 文件)
-# set(UIS
-#     src/ui/mainwindow.ui
-# )
-
-# 添加可执行文件目标
-add_executable(AIChat ${SOURCES} ${HEADERS} ${UIS}) # 确保包含了 SOURCES 和 HEADERS
-
-# 链接 Qt 库
-target_link_libraries(AIChat PRIVATE Qt5::Core Qt5::Gui Qt5::Widgets)
-
-# --- 网络库链接 (仅 Windows 需要) ---
-# 如果你在 Windows 上编译，需要链接 Winsock 库
-# if(WIN32)
-#   target_link_libraries(AIChat PRIVATE ws2_32)
-# endif()
-# --- 网络库链接结束 ---
-
-
-# 添加包含目录 (确保编译器能找到头文件)
-target_include_directories(AIChat PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Network # 添加 Network 目录
-)
+    add_subdirectory(src/ui)
+endif()
