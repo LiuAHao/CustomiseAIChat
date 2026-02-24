@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 人设聊天应用</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome 图标 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Tailwind 自定义主题 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary:      '#6b21a8',
+                        primaryLight: '#8b5cf6',
+                        secondary:    '#06b6d4',
+                        bgLight:      '#f9fafb',
+                        borderGray:   '#e5e7eb',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- 自定义样式 -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body class="text-gray-800 font-sans h-screen overflow-hidden bg-gray-50">
+
+<!-- ============================================================ -->
+<!--  视图 1 · 登录页面                                            -->
+<!-- ============================================================ -->
+<div id="login-view" class="flex h-screen w-full transition-opacity duration-300">
+
+    <!-- 左侧渐变装饰区 -->
+    <div class="hidden lg:flex w-1/2 bg-gradient-to-br from-primaryLight to-primary flex-col justify-center items-center text-white p-12 relative overflow-hidden select-none">
+        <!-- 装饰元素 -->
+        <div class="login-decor-circle w-96 h-96 -top-20 -left-20"></div>
+        <div class="login-decor-circle w-64 h-64 bottom-10 right-10 opacity-40"></div>
+
+        <div class="z-10 flex flex-col items-center">
+            <div class="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center mb-6 backdrop-blur-sm shadow-lg">
+                <i class="fa-solid fa-robot text-4xl"></i>
+            </div>
+            <h1 class="text-4xl font-bold tracking-wider mb-4">AI人设聊天</h1>
+            <p class="text-white/80 text-center tracking-widest leading-relaxed">
+                创建你的专属AI人设<br>开启智能对话，探索无限可能
+            </p>
+        </div>
+    </div>
+
+    <!-- 右侧登录表单 -->
+    <div class="w-full lg:w-1/2 bg-white flex justify-center items-center p-8 lg:p-24">
+        <div class="w-full max-w-md animate-fade-in">
+            <!-- 移动端 Logo -->
+            <div class="flex flex-col items-center mb-6 lg:hidden">
+                <div class="w-16 h-16 bg-primaryLight rounded-full flex items-center justify-center mb-3 shadow-lg">
+                    <i class="fa-solid fa-robot text-2xl text-white"></i>
+                </div>
+                <h1 class="text-xl font-bold text-primary">AI人设聊天</h1>
+            </div>
+
+            <h2 class="text-3xl font-bold text-center mb-10 text-gray-800">欢迎回来</h2>
+
+            <form id="login-form" class="space-y-6">
+                <!-- 邮箱 -->
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1.5 ml-1">邮箱地址</label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400">
+                            <i class="fa-regular fa-user"></i>
+                        </span>
+                        <input id="login-email" type="email" required autocomplete="email"
+                               class="w-full pl-11 pr-4 py-3 bg-[#f0f4ff] border border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryLight transition text-sm text-gray-700"
+                               placeholder="请输入邮箱">
+                    </div>
+                </div>
+
+                <!-- 密码 -->
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1.5 ml-1">密码</label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400">
+                            <i class="fa-solid fa-lock"></i>
+                        </span>
+                        <input id="login-password" type="password" required autocomplete="current-password"
+                               class="w-full pl-11 pr-10 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryLight transition text-sm text-gray-700"
+                               placeholder="请输入密码">
+                        <button type="button" class="toggle-pwd absolute inset-y-0 right-0 flex items-center pr-4 text-gray-400 hover:text-gray-600" aria-label="切换密码可见">
+                            <i class="fa-regular fa-eye-slash"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 辅助选项 -->
+                <div class="flex items-center justify-between text-sm">
+                    <label class="flex items-center cursor-pointer text-gray-500 hover:text-gray-700 select-none">
+                        <input id="remember-me-checkbox" type="checkbox" class="rounded border-gray-300 text-primaryLight shadow-sm focus:border-primaryLight focus:ring focus:ring-primaryLight focus:ring-opacity-50 mr-2">
+                        记住我
+                    </label>
+                    <a href="#" id="link-forgot" class="text-primaryLight hover:underline">忘记密码?</a>
+                </div>
+
+                <!-- 登录按钮 -->
+                <button type="submit"
+                        class="w-full py-3 bg-primaryLight hover:bg-primary text-white font-medium rounded-lg transition duration-200 shadow-md shadow-primaryLight/30 tracking-widest text-lg active:scale-[0.98]">
+                    登 录
+                </button>
+            </form>
+
+            <p class="text-center mt-8 text-sm text-gray-500">
+                还没有账号？ <a href="#" id="link-register" class="text-primaryLight hover:underline font-medium">立即注册</a>
+            </p>
+        </div>
+    </div>
+</div>
+
+
+<!-- ============================================================ -->
+<!--  视图 2 · 主聊天界面                                          -->
+<!-- ============================================================ -->
+<div id="app-view" class="hidden h-screen w-full flex bg-white">
+
+    <!-- 移动端侧边栏遮罩 -->
+    <div id="sidebar-overlay" class="hidden md:hidden sidebar-mobile-overlay"></div>
+
+    <!-- 左侧侧边栏 -->
+    <aside id="sidebar" class="w-64 bg-bgLight border-r border-borderGray flex flex-col flex-shrink-0 sidebar-mobile md:relative md:translate-x-0 md:flex">
+
+        <!-- 个人信息头部 -->
+        <div class="p-5 border-b border-borderGray flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <img id="sidebar-user-avatar" src="https://i.pravatar.cc/150?img=11" alt="用户头像" class="w-10 h-10 rounded-full object-cover ring-2 ring-white shadow">
+                <div class="flex flex-col">
+                    <span class="font-bold text-sm text-gray-800">Alex.Design</span>
+                    <div class="flex items-center gap-1 mt-0.5">
+                        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                        <span class="text-xs text-green-600 font-medium">在线</span>
+                    </div>
+                </div>
+            </div>
+            <button id="btn-settings" class="text-gray-400 hover:text-gray-600 transition p-1" title="设置" aria-label="打开设置">
+                <i class="fa-solid fa-gear"></i>
+            </button>
+        </div>
+
+        <!-- 新建人设按钮 -->
+        <div class="p-4">
+            <button id="btn-create-persona" class="w-full bg-secondary hover:bg-cyan-600 text-white py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium transition shadow-sm active:scale-[0.97]">
+                <i class="fa-solid fa-plus"></i> 创建新人设
+            </button>
+        </div>
+
+        <!-- 人设列表 -->
+        <div class="flex-1 overflow-y-auto no-scrollbar px-3 pb-4">
+            <h3 class="text-xs font-bold text-gray-400 mb-3 px-2 uppercase tracking-wider">我的智能体</h3>
+            <ul id="persona-list" class="space-y-1"></ul>
+        </div>
+    </aside>
+
+    <!-- 右侧主聊天区 -->
+    <main class="flex-1 flex flex-col bg-white relative min-w-0">
+
+        <!-- 聊天头部 -->
+        <header class="px-6 py-4 border-b border-borderGray flex items-center gap-3">
+            <!-- 移动端汉堡菜单 -->
+            <button id="mobile-menu-btn" class="md:hidden text-gray-500 hover:text-gray-700 -ml-1 mr-1" aria-label="菜单">
+                <i class="fa-solid fa-bars text-lg"></i>
+            </button>
+            <div class="flex-1 min-w-0">
+                <h2 id="chat-persona-name" class="text-lg font-bold text-gray-800 truncate">智能助手</h2>
+                <p id="chat-persona-desc" class="text-xs text-gray-500 mt-0.5 truncate">全能型AI助手，为您解答各种问题，提供专业的建议与支持。</p>
+            </div>
+            <button id="btn-edit-persona" class="text-gray-400 hover:text-secondary transition p-2 rounded-lg hover:bg-gray-100" title="编辑当前人设" aria-label="编辑人设">
+                <i class="fa-solid fa-pen-to-square"></i>
+            </button>
+            <button id="btn-delete-persona" class="text-gray-400 hover:text-red-500 transition p-2 rounded-lg hover:bg-red-50" title="删除当前人设" aria-label="删除人设">
+                <i class="fa-solid fa-trash-can"></i>
+            </button>
+        </header>
+
+        <!-- 聊天消息区 -->
+        <div id="chat-messages" class="flex-1 overflow-y-auto p-6 space-y-6 chat-bg no-scrollbar">
+
+            <!-- AI 消息 -->
+            <div class="animate-msg">
+                <div class="flex items-start gap-4">
+                    <div class="w-8 h-8 bg-gray-100 rounded-full flex flex-shrink-0 items-center justify-center border border-gray-200 text-sm">🤖</div>
+                    <div class="flex flex-col gap-1 items-start max-w-[70%]">
+                        <div class="bg-white border border-gray-100 shadow-sm p-4 rounded-2xl rounded-tl-sm text-sm text-gray-700 leading-relaxed">
+                            你好！我是智能助手，有什么可以帮助你的吗？
+                        </div>
+                        <span class="text-[11px] text-gray-400 ml-1">10:20 AM</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 用户消息 -->
+            <div class="animate-msg">
+                <div class="flex items-start gap-4 flex-row-reverse">
+                    <div class="flex flex-col gap-1 items-end max-w-[70%]">
+                        <div class="bg-secondary text-white shadow-md shadow-secondary/20 p-4 rounded-2xl rounded-tr-sm text-sm leading-relaxed">
+                            帮我介绍一下这个应用。
+                        </div>
+                        <span class="text-[11px] text-gray-400 mr-1">10:21 AM</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI 消息 2 -->
+            <div class="animate-msg">
+                <div class="flex items-start gap-4">
+                    <div class="w-8 h-8 bg-gray-100 rounded-full flex flex-shrink-0 items-center justify-center border border-gray-200 text-sm">🤖</div>
+                    <div class="flex flex-col gap-1 items-start max-w-[70%]">
+                        <div class="bg-white border border-gray-100 shadow-sm p-4 rounded-2xl rounded-tl-sm text-sm text-gray-700 leading-relaxed space-y-3">
+                            <p>这是一个AI人设聊天应用，你可以创建不同的AI人设，每个人设都有独特的性格和专长。</p>
+                            <p>你可以随时切换人设进行对话，所有历史记录都会保存。无论你需要灵感、知识还是陪伴，这里都能满足。</p>
+                        </div>
+                        <span class="text-[11px] text-gray-400 ml-1">10:22 AM</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 用户消息 2 -->
+            <div class="animate-msg">
+                <div class="flex items-start gap-4 flex-row-reverse">
+                    <div class="flex flex-col gap-1 items-end max-w-[70%]">
+                        <div class="bg-secondary text-white shadow-md shadow-secondary/20 p-4 rounded-2xl rounded-tr-sm text-sm leading-relaxed">
+                            听起来很不错，怎么创建呢？
+                        </div>
+                        <span class="text-[11px] text-gray-400 mr-1">10:23 AM</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 输入区域 -->
+        <div class="p-4 bg-white border-t border-borderGray">
+            <div class="flex items-end gap-3">
+                <div class="flex-1 bg-gray-50 border border-gray-200 rounded-xl p-3 focus-within:ring-1 focus-within:ring-secondary focus-within:border-secondary transition">
+                    <textarea id="msg-input"
+                              class="w-full bg-transparent resize-none outline-none text-sm text-gray-700 placeholder-gray-400 max-h-32 no-scrollbar"
+                              rows="1"
+                              placeholder="输入消息... (Shift + Enter 换行)"></textarea>
+                </div>
+                <button id="send-btn"
+                        class="flex-shrink-0 w-11 h-11 bg-secondary hover:bg-cyan-600 text-white rounded-xl flex items-center justify-center transition shadow-sm active:scale-95"
+                        title="发送" aria-label="发送消息">
+                    <i class="fa-solid fa-paper-plane text-sm"></i>
+                </button>
+            </div>
+        </div>
+    </main>
+</div>
+
+
+<!-- ============================================================ -->
+<!--  弹窗 · 个人设置                                              -->
+<!-- ============================================================ -->
+<div id="settings-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-label="个人设置">
+
+    <!-- 遮罩 -->
+    <div class="modal-overlay absolute inset-0 bg-gray-900/40 backdrop-blur-sm" data-close-modal></div>
+
+    <!-- 弹窗主体 -->
+    <div class="modal-panel bg-white rounded-xl w-full max-w-md z-10 shadow-2xl overflow-hidden flex flex-col mx-4">
+
+        <!-- 头部 -->
+        <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+            <h2 class="text-xl font-bold text-gray-800">个人设置</h2>
+            <button data-close-modal class="text-gray-400 hover:text-gray-600 transition p-1 rounded-lg hover:bg-gray-100" aria-label="关闭">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+        </div>
+
+        <!-- 内容 -->
+        <div class="p-6 space-y-8 overflow-y-auto max-h-[70vh] no-scrollbar">
+
+            <!-- 头像与基本信息 -->
+            <section>
+                <div class="flex items-center gap-2 mb-4 text-blue-600">
+                    <i class="fa-regular fa-circle-user"></i>
+                    <h3 class="font-medium text-gray-800">基本信息</h3>
+                </div>
+
+                <!-- 头像区域 -->
+                <div class="flex items-center gap-5 mb-5">
+                    <div class="relative group">
+                        <img id="settings-avatar" src="https://i.pravatar.cc/150?img=11" alt="头像" class="w-16 h-16 rounded-full object-cover ring-2 ring-gray-100 shadow">
+                        <label class="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer">
+                            <i class="fa-solid fa-camera text-white text-sm"></i>
+                            <input type="file" accept="image/*" class="hidden" id="avatar-upload">
+                        </label>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p id="settings-display-name" class="text-sm font-medium text-gray-800">Alex.Design</p>
+                        <p class="text-xs text-gray-400 mt-0.5 truncate" id="settings-email">2659414541@qq.com</p>
+                    </div>
+                </div>
+
+                <!-- 昵称 -->
+                <div class="flex items-end gap-3">
+                    <div class="flex-1">
+                        <label class="block text-xs text-gray-500 mb-1">昵称</label>
+                        <input id="settings-nickname-input" type="text" value="用户123"
+                               class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 transition">
+                    </div>
+                    <button id="btn-save-nickname" class="px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded-lg flex items-center gap-2 transition active:scale-[0.97]">
+                        <i class="fa-regular fa-floppy-disk"></i> 保存
+                    </button>
+                </div>
+            </section>
+
+            <hr class="border-gray-100">
+
+            <!-- 用户等级 -->
+            <section>
+                <div class="flex items-center gap-2 mb-4 text-blue-600">
+                    <i class="fa-solid fa-crown"></i>
+                    <h3 class="font-medium text-gray-800">会员等级</h3>
+                </div>
+                <div class="flex gap-3">
+                    <!-- 免费用户卡片 -->
+                    <div id="tier-free" class="flex-1 border-2 border-blue-500 bg-blue-50/50 rounded-xl p-4 cursor-pointer transition hover:shadow-md relative">
+                        <div class="absolute top-2 right-2">
+                            <span class="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
+                                <i class="fa-solid fa-check text-white text-[10px]"></i>
+                            </span>
+                        </div>
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-user text-blue-500"></i>
+                            <span class="font-medium text-sm text-gray-800">免费版</span>
+                        </div>
+                        <p class="text-xs text-gray-500 leading-relaxed">基础AI对话<br>每日 20 次对话</p>
+                        <p class="text-lg font-bold text-gray-800 mt-2">¥0<span class="text-xs font-normal text-gray-400">/月</span></p>
+                    </div>
+                    <!-- Pro用户卡片 -->
+                    <div id="tier-pro" class="flex-1 border-2 border-gray-200 bg-white rounded-xl p-4 cursor-pointer transition hover:shadow-md hover:border-purple-300 relative">
+                        <div class="absolute -top-2 -right-2">
+                            <span class="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow">推荐</span>
+                        </div>
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-gem text-purple-500"></i>
+                            <span class="font-medium text-sm text-gray-800">Pro</span>
+                        </div>
+                        <p class="text-xs text-gray-500 leading-relaxed">无限AI对话<br>高级人设定制</p>
+                        <p class="text-lg font-bold text-gray-800 mt-2">¥29<span class="text-xs font-normal text-gray-400">/月</span></p>
+                    </div>
+                </div>
+            </section>
+
+            <hr class="border-gray-100">
+
+            <!-- 安全设置 -->
+            <section>
+                <div class="flex items-center gap-2 mb-4 text-blue-600">
+                    <i class="fa-solid fa-lock"></i>
+                    <h3 class="font-medium text-gray-800">安全设置</h3>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">当前密码</label>
+                        <div class="relative">
+                            <input id="settings-old-password" type="password" value=""
+                                   class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 transition pr-10">
+                            <button type="button" class="toggle-pwd absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 cursor-pointer hover:text-gray-600" aria-label="切换密码可见">
+                                <i class="fa-solid fa-eye-slash"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">新密码</label>
+                        <div class="relative">
+                            <input id="settings-new-password" type="password" placeholder="输入新密码"
+                                   class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 transition pr-10">
+                            <button type="button" class="toggle-pwd absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 cursor-pointer hover:text-gray-600" aria-label="切换密码可见">
+                                <i class="fa-solid fa-eye-slash"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">确认新密码</label>
+                        <div class="relative">
+                            <input id="settings-confirm-password" type="password" placeholder="再次输入新密码"
+                                   class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 transition pr-10">
+                            <button type="button" class="toggle-pwd absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 cursor-pointer hover:text-gray-600" aria-label="切换密码可见">
+                                <i class="fa-solid fa-eye-slash"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex justify-end pt-2">
+                        <button id="btn-update-password" class="px-6 py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-sm rounded-lg flex items-center gap-2 transition active:scale-[0.97]">
+                            <i class="fa-solid fa-check"></i> 更新密码
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- 底部退出登录 -->
+        <div class="p-4 border-t border-gray-100 bg-gray-50 flex justify-center">
+            <button id="btn-logout"
+                    class="w-full py-2.5 border border-red-200 text-red-500 hover:bg-red-50 text-sm rounded-lg flex items-center justify-center gap-2 transition bg-white active:scale-[0.97]">
+                <i class="fa-solid fa-arrow-right-from-bracket"></i> 退出登录
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!--  视图 3 · 注册页面                                            -->
+<!-- ============================================================ -->
+<div id="register-view" class="hidden flex h-screen w-full transition-opacity duration-300">
+
+    <!-- 左侧渐变装饰区 -->
+    <div class="hidden lg:flex w-1/2 bg-gradient-to-br from-primaryLight to-primary flex-col justify-center items-center text-white p-12 relative overflow-hidden select-none">
+        <div class="login-decor-circle w-96 h-96 -top-20 -left-20"></div>
+        <div class="login-decor-circle w-64 h-64 bottom-10 right-10 opacity-40"></div>
+        <div class="z-10 flex flex-col items-center">
+            <div class="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center mb-6 backdrop-blur-sm shadow-lg">
+                <i class="fa-solid fa-user-plus text-4xl"></i>
+            </div>
+            <h1 class="text-4xl font-bold tracking-wider mb-4">加入我们</h1>
+            <p class="text-white/80 text-center tracking-widest leading-relaxed">
+                创建账号，开始你的<br>AI智能对话之旅
+            </p>
+        </div>
+    </div>
+
+    <!-- 右侧注册表单 -->
+    <div class="w-full lg:w-1/2 bg-white flex justify-center items-center p-8 lg:p-24">
+        <div class="w-full max-w-md animate-fade-in">
+            <div class="flex flex-col items-center mb-6 lg:hidden">
+                <div class="w-16 h-16 bg-primaryLight rounded-full flex items-center justify-center mb-3 shadow-lg">
+                    <i class="fa-solid fa-user-plus text-2xl text-white"></i>
+                </div>
+            </div>
+
+            <h2 class="text-3xl font-bold text-center mb-8 text-gray-800">创建账号</h2>
+
+            <form id="register-form" class="space-y-5">
+                <!-- 昵称 -->
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1.5 ml-1">昵称</label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400">
+                            <i class="fa-regular fa-user"></i>
+                        </span>
+                        <input type="text" required
+                               class="w-full pl-11 pr-4 py-3 bg-[#f0f4ff] border border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryLight transition text-sm text-gray-700"
+                               placeholder="请输入昵称">
+                    </div>
+                </div>
+
+                <!-- 邮箱 -->
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1.5 ml-1">邮箱地址</label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400">
+                            <i class="fa-regular fa-envelope"></i>
+                        </span>
+                        <input type="email" required autocomplete="email"
+                               class="w-full pl-11 pr-4 py-3 bg-[#f0f4ff] border border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryLight transition text-sm text-gray-700"
+                               placeholder="请输入邮箱">
+                    </div>
+                </div>
+
+                <!-- 密码 -->
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1.5 ml-1">密码</label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400">
+                            <i class="fa-solid fa-lock"></i>
+                        </span>
+                        <input type="password" required autocomplete="new-password"
+                               class="w-full pl-11 pr-10 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryLight transition text-sm text-gray-700"
+                               placeholder="请设置密码（至少6位）">
+                        <button type="button" class="toggle-pwd absolute inset-y-0 right-0 flex items-center pr-4 text-gray-400 hover:text-gray-600" aria-label="切换密码可见">
+                            <i class="fa-regular fa-eye-slash"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 确认密码 -->
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1.5 ml-1">确认密码</label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400">
+                            <i class="fa-solid fa-lock"></i>
+                        </span>
+                        <input type="password" required autocomplete="new-password"
+                               class="w-full pl-11 pr-10 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryLight transition text-sm text-gray-700"
+                               placeholder="请再次输入密码">
+                        <button type="button" class="toggle-pwd absolute inset-y-0 right-0 flex items-center pr-4 text-gray-400 hover:text-gray-600" aria-label="切换密码可见">
+                            <i class="fa-regular fa-eye-slash"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 注册按钮 -->
+                <button type="submit"
+                        class="w-full py-3 bg-primaryLight hover:bg-primary text-white font-medium rounded-lg transition duration-200 shadow-md shadow-primaryLight/30 tracking-widest text-lg active:scale-[0.98]">
+                    注 册
+                </button>
+            </form>
+
+            <p class="text-center mt-8 text-sm text-gray-500">
+                已有账号？ <a href="#" id="link-to-login-from-reg" class="text-primaryLight hover:underline font-medium">返回登录</a>
+            </p>
+        </div>
+    </div>
+</div>
+
+
+<!-- ============================================================ -->
+<!--  视图 4 · 忘记密码页面                                        -->
+<!-- ============================================================ -->
+<div id="forgot-view" class="hidden flex h-screen w-full transition-opacity duration-300">
+
+    <!-- 左侧渐变装饰区 -->
+    <div class="hidden lg:flex w-1/2 bg-gradient-to-br from-primaryLight to-primary flex-col justify-center items-center text-white p-12 relative overflow-hidden select-none">
+        <div class="login-decor-circle w-96 h-96 -top-20 -left-20"></div>
+        <div class="login-decor-circle w-64 h-64 bottom-10 right-10 opacity-40"></div>
+        <div class="z-10 flex flex-col items-center">
+            <div class="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center mb-6 backdrop-blur-sm shadow-lg">
+                <i class="fa-solid fa-key text-4xl"></i>
+            </div>
+            <h1 class="text-4xl font-bold tracking-wider mb-4">找回密码</h1>
+            <p class="text-white/80 text-center tracking-widest leading-relaxed">
+                输入你的注册邮箱<br>我们将为你发送重置链接
+            </p>
+        </div>
+    </div>
+
+    <!-- 右侧表单 -->
+    <div class="w-full lg:w-1/2 bg-white flex justify-center items-center p-8 lg:p-24">
+        <div class="w-full max-w-md animate-fade-in">
+            <div class="flex flex-col items-center mb-6 lg:hidden">
+                <div class="w-16 h-16 bg-primaryLight rounded-full flex items-center justify-center mb-3 shadow-lg">
+                    <i class="fa-solid fa-key text-2xl text-white"></i>
+                </div>
+            </div>
+
+            <h2 class="text-3xl font-bold text-center mb-4 text-gray-800">忘记密码</h2>
+            <p class="text-center text-sm text-gray-500 mb-8">请输入你的注册邮箱，我们将发送密码重置链接。</p>
+
+            <form id="forgot-form" class="space-y-6">
+                <!-- 邮箱 -->
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1.5 ml-1">邮箱地址</label>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400">
+                            <i class="fa-regular fa-envelope"></i>
+                        </span>
+                        <input type="email" required autocomplete="email"
+                               class="w-full pl-11 pr-4 py-3 bg-[#f0f4ff] border border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryLight transition text-sm text-gray-700"
+                               placeholder="请输入注册邮箱">
+                    </div>
+                </div>
+
+                <!-- 发送按钮 -->
+                <button type="submit"
+                        class="w-full py-3 bg-primaryLight hover:bg-primary text-white font-medium rounded-lg transition duration-200 shadow-md shadow-primaryLight/30 tracking-widest text-lg active:scale-[0.98]">
+                    发送重置链接
+                </button>
+            </form>
+
+            <!-- 成功提示（默认隐藏） -->
+            <div id="forgot-success" class="hidden mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                        <i class="fa-solid fa-check text-green-600 text-sm"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium text-green-800">邮件已发送！</p>
+                        <p class="text-xs text-green-600 mt-0.5">请检查你的邮箱并点击重置链接。</p>
+                    </div>
+                </div>
+            </div>
+
+            <p class="text-center mt-8 text-sm text-gray-500">
+                想起来了？ <a href="#" id="link-to-login-from-forgot" class="text-primaryLight hover:underline font-medium">返回登录</a>
+            </p>
+        </div>
+    </div>
+</div>
+
+
+<!-- ============================================================ -->
+<!--  弹窗 · 创建新人设                                            -->
+<!-- ============================================================ -->
+<div id="create-persona-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-label="创建新人设">
+
+    <!-- 遮罩 -->
+    <div class="modal-overlay absolute inset-0 bg-gray-900/40 backdrop-blur-sm" data-close-persona-modal></div>
+
+    <!-- 弹窗主体 -->
+    <div class="modal-panel bg-white rounded-xl w-full max-w-lg z-10 shadow-2xl overflow-hidden flex flex-col mx-4">
+
+        <!-- 头部 -->
+        <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 bg-secondary/10 rounded-lg flex items-center justify-center">
+                    <i class="fa-solid fa-wand-magic-sparkles text-secondary text-sm"></i>
+                </div>
+                <h2 id="persona-modal-title" class="text-lg font-bold text-gray-800">创建新人设</h2>
+            </div>
+            <button data-close-persona-modal class="text-gray-400 hover:text-gray-600 transition p-1 rounded-lg hover:bg-gray-100" aria-label="关闭">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+        </div>
+
+        <!-- 内容 -->
+        <div class="p-6 space-y-6 overflow-y-auto max-h-[70vh] no-scrollbar">
+
+            <!-- 人设名称 -->
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1.5">人设名称</label>
+                <input type="text" id="persona-name-input" maxlength="20"
+                       class="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-secondary/50 focus:border-secondary transition"
+                       placeholder="给你的AI起个名字，如：旅行顾问">
+            </div>
+
+            <!-- 头像选择 -->
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-3">选择头像</label>
+
+                <!-- 预设头像 -->
+                <div class="mb-3">
+                    <p class="text-[11px] text-gray-400 mb-2 uppercase tracking-wider">预设图标</p>
+                    <div id="preset-avatars" class="flex flex-wrap gap-2">
+                        <button type="button" data-avatar="emoji:🤖" class="avatar-option selected w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center text-xl hover:ring-2 hover:ring-secondary/40 transition">
+                            🤖
+                        </button>
+                        <button type="button" data-avatar="emoji:🎨" class="avatar-option w-12 h-12 bg-pink-100 rounded-xl flex items-center justify-center text-xl hover:ring-2 hover:ring-secondary/40 transition">
+                            🎨
+                        </button>
+                        <button type="button" data-avatar="emoji:📚" class="avatar-option w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center text-xl hover:ring-2 hover:ring-secondary/40 transition">
+                            📚
+                        </button>
+                        <button type="button" data-avatar="emoji:🎵" class="avatar-option w-12 h-12 bg-purple-100 rounded-xl flex items-center justify-center text-xl hover:ring-2 hover:ring-secondary/40 transition">
+                            🎵
+                        </button>
+                        <button type="button" data-avatar="emoji:🏋️" class="avatar-option w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center text-xl hover:ring-2 hover:ring-secondary/40 transition">
+                            🏋️
+                        </button>
+                        <button type="button" data-avatar="emoji:✈️" class="avatar-option w-12 h-12 bg-cyan-100 rounded-xl flex items-center justify-center text-xl hover:ring-2 hover:ring-secondary/40 transition">
+                            ✈️
+                        </button>
+                        <button type="button" data-avatar="emoji:💡" class="avatar-option w-12 h-12 bg-yellow-100 rounded-xl flex items-center justify-center text-xl hover:ring-2 hover:ring-secondary/40 transition">
+                            💡
+                        </button>
+                        <button type="button" data-avatar="emoji:🔬" class="avatar-option w-12 h-12 bg-teal-100 rounded-xl flex items-center justify-center text-xl hover:ring-2 hover:ring-secondary/40 transition">
+                            🔬
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 自定义上传 -->
+                <div>
+                    <p class="text-[11px] text-gray-400 mb-2 uppercase tracking-wider">自定义上传</p>
+                    <label class="avatar-option flex items-center gap-3 p-3 border-2 border-dashed border-gray-200 rounded-xl cursor-pointer hover:border-secondary/50 hover:bg-secondary/5 transition">
+                        <div class="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center text-gray-400">
+                            <i class="fa-solid fa-cloud-arrow-up text-lg"></i>
+                        </div>
+                        <div>
+                            <p class="text-sm text-gray-600">上传自定义头像</p>
+                            <p class="text-[11px] text-gray-400">支持 JPG、PNG，最大 2MB</p>
+                        </div>
+                        <input type="file" accept="image/*" class="hidden" id="persona-avatar-upload">
+                    </label>
+                    <!-- 自定义头像预览 -->
+                    <div id="custom-avatar-preview" class="hidden mt-2 flex items-center gap-2">
+                        <img id="custom-avatar-img" src="" class="w-12 h-12 rounded-xl object-cover ring-2 ring-secondary">
+                        <span class="text-xs text-gray-500">已选择自定义头像</span>
+                        <button type="button" id="remove-custom-avatar" class="text-xs text-red-400 hover:text-red-600 ml-auto">移除</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 人设描述 -->
+            <div>
+                <div class="flex items-center justify-between mb-1.5">
+                    <label class="block text-xs font-medium text-gray-500">人设描述</label>
+                    <button type="button" id="btn-ai-gen-desc" class="flex items-center gap-1.5 text-xs text-secondary hover:text-cyan-600 transition px-2 py-1 rounded-md hover:bg-secondary/10" title="根据名称自动生成描述">
+                        <i class="fa-solid fa-wand-magic-sparkles text-[10px]"></i>
+                        <span>AI 生成</span>
+                    </button>
+                </div>
+                <textarea id="persona-desc-input"
+                          class="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-secondary/50 focus:border-secondary transition resize-none"
+                          rows="3" maxlength="200"
+                          placeholder="描述这个AI人设的性格、专长和风格..."></textarea>
+                <p class="text-right text-[11px] text-gray-400 mt-1"><span id="desc-char-count">0</span>/200</p>
+            </div>
+
+        </div>
+
+        <!-- 底部按钮 -->
+        <div class="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+            <button data-close-persona-modal class="px-5 py-2.5 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition">
+                取消
+            </button>
+            <button id="btn-confirm-create-persona" class="px-6 py-2.5 bg-secondary hover:bg-cyan-600 text-white text-sm font-medium rounded-lg flex items-center gap-2 transition shadow-sm active:scale-[0.97]">
+                <i class="fa-solid fa-plus text-xs"></i> 创建人设
+            </button>
+        </div>
+    </div>
+</div>
+
+
+<!-- 订阅弹窗 -->
+<div id="subscribe-modal" class="hidden fixed inset-0 z-[70] flex items-center justify-center">
+    <div class="absolute inset-0 bg-gray-900/60 backdrop-blur-sm" id="subscribe-overlay"></div>
+    <div class="relative bg-white rounded-3xl w-full max-w-sm mx-4 shadow-2xl overflow-hidden" style="animation: modalIn 0.22s ease-out forwards">
+        <!-- 头部渐变色背景 -->
+        <div class="bg-gradient-to-br from-purple-600 via-purple-500 to-pink-500 px-6 pt-8 pb-10 text-center text-white relative">
+            <button id="subscribe-close-btn" class="absolute top-4 right-4 text-white/70 hover:text-white transition p-1">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+            <div class="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                <i class="fa-solid fa-gem text-2xl text-white"></i>
+            </div>
+            <h2 class="text-xl font-bold mb-1">Pro 订阅</h2>
+            <p class="text-white/80 text-sm">解锁全部高级功能，体验极致AI对话</p>
+            <div class="mt-4">
+                <span class="text-4xl font-extrabold">￥29</span>
+                <span class="text-white/70 text-sm"> / 月</span>
+            </div>
+        </div>
+        <!-- 功能列表 -->
+        <div class="px-6 py-5 space-y-3">
+            <div class="flex items-center gap-3 text-sm text-gray-700">
+                <div class="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                    <i class="fa-solid fa-infinity text-purple-500 text-xs"></i>
+                </div>
+                <span>无限次AI对话次数</span>
+            </div>
+            <div class="flex items-center gap-3 text-sm text-gray-700">
+                <div class="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                    <i class="fa-solid fa-sparkles text-purple-500 text-xs"></i>
+                </div>
+                <span>高级人设定制与系统提示词</span>
+            </div>
+            <div class="flex items-center gap-3 text-sm text-gray-700">
+                <div class="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                    <i class="fa-solid fa-bolt text-purple-500 text-xs"></i>
+                </div>
+                <span>优先响应速度，低延迟</span>
+            </div>
+            <div class="flex items-center gap-3 text-sm text-gray-700">
+                <div class="w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                    <i class="fa-solid fa-headset text-purple-500 text-xs"></i>
+                </div>
+                <span>专属客服支持</span>
+            </div>
+        </div>
+        <!-- 按鈕区 -->
+        <div class="px-6 pb-6 space-y-2">
+            <button id="subscribe-confirm-btn" class="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-500 hover:from-purple-700 hover:to-pink-600 text-white font-semibold rounded-xl transition shadow-lg shadow-purple-200 active:scale-[0.97] text-sm">
+                立即订阅 Pro
+            </button>
+            <button id="subscribe-cancel-btn" class="w-full py-2.5 text-sm text-gray-400 hover:text-gray-600 transition">
+                暂不需要
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- 通用确认弹窗 -->
+<div id="confirm-modal" class="hidden fixed inset-0 z-[60] flex items-center justify-center">
+    <div class="absolute inset-0 bg-gray-900/50 backdrop-blur-sm"></div>
+    <div class="relative bg-white rounded-2xl w-full max-w-xs mx-4 shadow-2xl overflow-hidden" style="animation: modalIn 0.22s ease-out forwards">
+        <div class="p-6 text-center">
+            <div id="confirm-icon-wrap" class="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 bg-red-100">
+                <i id="confirm-icon" class="fa-solid fa-triangle-exclamation text-red-500 text-xl"></i>
+            </div>
+            <h3 id="confirm-title" class="text-base font-bold text-gray-800 mb-2">确认操作</h3>
+            <p id="confirm-message" class="text-sm text-gray-500 leading-relaxed"></p>
+        </div>
+        <div class="px-6 pb-6 flex gap-3">
+            <button id="confirm-cancel-btn" class="flex-1 py-2.5 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm rounded-xl transition active:scale-[0.97]">取消</button>
+            <button id="confirm-ok-btn" class="flex-1 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-xl transition active:scale-[0.97]">确认删除</button>
+        </div>
+    </div>
+</div>
+
+<!-- 应用脚本 -->
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

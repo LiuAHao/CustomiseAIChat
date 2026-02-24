@@ -1,6 +1,7 @@
 #include <signal.h>
 #include <iostream>
 #include <cstring>
+#include <libgen.h>
 #include "ChatServer.h"
 #include "config/ServerConfig.h"
 #include "db/Database.h"
@@ -39,12 +40,9 @@ void printUsage(const char* prog) {
 int main(int argc, char* argv[]) {
     auto& config = ServerConfig::instance();
 
-    // 默认先加载根目录 .env（不存在时忽略）
-    config.loadFromFile(".env");
-
     // 解析命令行参数
     if (argc == 2) {
-        // 通过配置文件覆盖默认配置（支持 .env / .conf）
+        // 通过配置文件加载基础配置（支持 .env / .conf）
         if (!config.loadFromFile(argv[1])) {
             std::cerr << "[Main] 加载配置文件失败，使用默认配置" << std::endl;
         }
@@ -55,6 +53,34 @@ int main(int argc, char* argv[]) {
     } else if (argc > 3) {
         printUsage(argv[0]);
         return -1;
+    }
+
+    // 最后加载 .env（优先级最高，覆盖之前的配置，不存在则忽略）
+    // 尝试多个位置：配置文件同目录 > 可执行文件同目录 > CWD
+    bool envLoaded = false;
+    if (argc >= 2) {
+        // 配置文件同目录的 .env
+        std::string confDir = std::string(argv[1]);
+        size_t slash = confDir.find_last_of('/');
+        if (slash != std::string::npos) {
+            confDir = confDir.substr(0, slash + 1);
+        } else {
+            confDir = "./";
+        }
+        envLoaded = config.loadFromFile(confDir + ".env");
+    }
+    if (!envLoaded) {
+        // 可执行文件同目录的 .env
+        std::string exeDir = std::string(argv[0]);
+        size_t slash = exeDir.find_last_of('/');
+        if (slash != std::string::npos) {
+            exeDir = exeDir.substr(0, slash + 1);
+            envLoaded = config.loadFromFile(exeDir + ".env");
+        }
+    }
+    if (!envLoaded) {
+        // CWD 下的 .env
+        config.loadFromFile(".env");
     }
 
     // 打印配置信息

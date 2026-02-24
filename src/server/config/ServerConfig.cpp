@@ -63,7 +63,6 @@ static std::string normalizeAiUrl(const std::string& rawUrl) {
 bool ServerConfig::loadFromFile(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {
-        std::cerr << "[Config] 无法打开配置文件: " << path << std::endl;
         return false;
     }
 
@@ -104,8 +103,12 @@ bool ServerConfig::loadFromFile(const std::string& path) {
             aiApiUrl = normalizeAiUrl(value);
         } else if (key == "ai_model" || key == "deepseek_model") {
             aiModel = value;
+        }        else if (key == "ai_temperature") {
+            try { aiTemperature = std::stod(value); } catch (...) {}
         }
-
+        else if (key == "ai_max_tokens") {
+            aiMaxTokens = safeToInt(value, aiMaxTokens);
+        }
         // 聊天参数
         else if (key == "max_history_context") {
             maxHistoryContext = safeToInt(value, maxHistoryContext);
@@ -125,6 +128,8 @@ void ServerConfig::print() const {
     std::cout << "  AI模型:     " << aiModel << std::endl;
     std::cout << "  AI API:     " << aiApiUrl << std::endl;
     std::cout << "  API密钥:    " << (aiApiKey.empty() ? "(未配置)" : "****已配置") << std::endl;
+    std::cout << "  温度:       " << aiTemperature << std::endl;
+    std::cout << "  最大tokens: " << aiMaxTokens << std::endl;
     std::cout << "  历史上下文: " << maxHistoryContext << " 条" << std::endl;
     std::cout << "================================" << std::endl;
 }

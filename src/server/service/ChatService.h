@@ -5,20 +5,28 @@ class ChatService {
 public:
     static ChatService& instance();
 
-    // 创建人设
-    std::string createPersona(int userId, const std::string& name, const std::string& description);
-    // 删除人设
+    // ===== 人设管理 =====
+    std::string createPersona(int userId, const std::string& name,
+                              const std::string& description, const std::string& systemPrompt,
+                              const std::string& avatar = "");
     std::string deletePersona(int userId, int personaId);
-    // 获取人设列表
     std::string listPersonas(int userId);
-    // 获取人设详情
     std::string getPersona(int userId, int personaId);
-    // 更新人设
-    std::string updatePersona(int userId, int personaId, const std::string& name, const std::string& description);
-    // 获取聊天历史
-    std::string getHistory(int userId, int personaId, int limit);
-    // 清空聊天记录
-    std::string clearHistory(int userId, int personaId);
+    std::string updatePersona(int userId, int personaId, const std::string& name,
+                              const std::string& description, const std::string& systemPrompt,
+                              const std::string& avatar = "");
+
+    // ===== 会话管理 =====
+    std::string createConversation(int userId, int personaId, const std::string& title);
+    std::string deleteConversation(int userId, int conversationId);
+    std::string listConversations(int userId, int limit = 50);
+    std::string listConversationsByPersona(int userId, int personaId);
+    std::string getConversation(int userId, int conversationId);
+    std::string updateConversationTitle(int userId, int conversationId, const std::string& title);
+
+    // ===== 聊天记录 =====
+    std::string getHistory(int userId, int conversationId, int limit);
+    std::string clearHistory(int userId, int conversationId);
 
 private:
     ChatService() = default;

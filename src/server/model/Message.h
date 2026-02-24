@@ -3,9 +3,8 @@
 
 struct ChatMessage {
     int id = 0;
-    int personaId = 0;
-    int userId = 0;
-    std::string sender;
+    int conversationId = 0;  // 所属会话
+    std::string role;         // "user" / "assistant" / "system"
     std::string content;
     std::string timestamp;
 };

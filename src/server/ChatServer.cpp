@@ -159,7 +159,9 @@ std::string ChatServer::dispatchAction(const std::string& action, const Json::Va
         return ChatService::instance().createPersona(
             userId,
             request.get("name", "").asString(),
-            request.get("description", "").asString()
+            request.get("description", "").asString(),
+            request.get("systemPrompt", "").asString(),
+            request.get("avatar", "").asString()
         );
     }
     if (action == "delete_persona") {
@@ -182,7 +184,49 @@ std::string ChatServer::dispatchAction(const std::string& action, const Json::Va
             userId,
             request.get("personaId", 0).asInt(),
             request.get("name", "").asString(),
-            request.get("description", "").asString()
+            request.get("description", "").asString(),
+            request.get("systemPrompt", "").asString(),
+            request.get("avatar", "").asString()
+        );
+    }
+
+    // --- 会话管理 ---
+    if (action == "create_conversation") {
+        return ChatService::instance().createConversation(
+            userId,
+            request.get("personaId", 0).asInt(),
+            request.get("title", "").asString()
+        );
+    }
+    if (action == "delete_conversation") {
+        return ChatService::instance().deleteConversation(
+            userId,
+            request.get("conversationId", 0).asInt()
+        );
+    }
+    if (action == "list_conversations") {
+        return ChatService::instance().listConversations(
+            userId,
+            request.get("limit", 50).asInt()
+        );
+    }
+    if (action == "list_conversations_by_persona") {
+        return ChatService::instance().listConversationsByPersona(
+            userId,
+            request.get("personaId", 0).asInt()
+        );
+    }
+    if (action == "get_conversation") {
+        return ChatService::instance().getConversation(
+            userId,
+            request.get("conversationId", 0).asInt()
+        );
+    }
+    if (action == "update_conversation_title") {
+        return ChatService::instance().updateConversationTitle(
+            userId,
+            request.get("conversationId", 0).asInt(),
+            request.get("title", "").asString()
         );
     }
 
@@ -190,21 +234,33 @@ std::string ChatServer::dispatchAction(const std::string& action, const Json::Va
     if (action == "send_message") {
         return AIService::instance().sendMessage(
             userId,
-            request.get("personaId", 0).asInt(),
+            request.get("conversationId", 0).asInt(),
             request.get("message", "").asString()
+        );
+    }
+    if (action == "greet") {
+        return AIService::instance().sendGreeting(
+            userId,
+            request.get("conversationId", 0).asInt()
+        );
+    }
+    if (action == "generate_desc") {
+        return AIService::instance().generateDescription(
+            userId,
+            request.get("name", "").asString()
         );
     }
     if (action == "get_history") {
         return ChatService::instance().getHistory(
             userId,
-            request.get("personaId", 0).asInt(),
+            request.get("conversationId", 0).asInt(),
             request.get("limit", 50).asInt()
         );
     }
     if (action == "clear_history") {
         return ChatService::instance().clearHistory(
             userId,
-            request.get("personaId", 0).asInt()
+            request.get("conversationId", 0).asInt()
         );
     }
 

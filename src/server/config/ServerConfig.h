@@ -16,6 +16,8 @@ struct ServerConfig {
     std::string aiApiKey;
     std::string aiApiUrl = "https://api.deepseek.com/v1/chat/completions";
     std::string aiModel = "deepseek-chat";
+    double aiTemperature = 0.7;   // 生成温度 0.0~2.0
+    int aiMaxTokens = 2048;       // 单次回复最大token数
 
     // 聊天设置
     int maxHistoryContext = 10;  // AI上下文携带的最大历史消息数
