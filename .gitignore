@@ -1,4 +1,4 @@
-# 编译生成的文件
+# Build outputs
 *.o
 *.so
 *.a
@@ -12,13 +12,17 @@
 *.jar
 *.war
 *.ear
+
+# Python
 *.pyc
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Databases
 *.db
 
-# 项目特定的二进制文件
+# Legacy project-specific binaries
 /Server
 /Client
 /AIServer
@@ -29,7 +33,7 @@ __pycache__/
 /src/net/bankserver
 /src/net/echoclient
 
-# 开发环境文件
+# IDE and editor files
 .vscode/
 .idea/
 *.swp
@@ -39,11 +43,11 @@ __pycache__/
 *.tmp
 *.log
 
-# 系统文件
+# OS files
 .DS_Store
 Thumbs.db
 
-# 依赖目录
+# Virtual environments and generic build dirs
 venv/
 env/
 .venv/
@@ -51,7 +55,14 @@ env/
 *.egg-info/
 dist/
 build/
+bin/
 
-# 环境变量文件
+# Go and frontend caches
+.gocache/
+.gomodcache/
+web/console/node_modules/
+web/console/.npm-cache/
+
+# Environment files
 .env
 *.env

@@ -1,0 +1,345 @@
+package httptransport
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+
+	"go-agent-platform/internal/app"
+	"go-agent-platform/internal/domain/auth"
+	wstransport "go-agent-platform/internal/transport/ws"
+)
+
+type Server struct {
+	app      *app.Application
+	http     *http.Server
+	wsServer *wstransport.Server
+}
+
+func New(addr string, application *app.Application) *Server {
+	wsServer := wstransport.New(application.Events)
+	mux := http.NewServeMux()
+	s := &Server{
+		app:      application,
+		wsServer: wsServer,
+		http: &http.Server{
+			Addr:    addr,
+			Handler: mux,
+		},
+	}
+	mux.HandleFunc("/healthz", s.handleHealth)
+	mux.HandleFunc("/ws", wsServer.Handle)
+	mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
+	mux.HandleFunc("/api/v1/me", s.withAuth(s.handleMe))
+	mux.HandleFunc("/api/v1/workspaces", s.withAuth(s.handleWorkspaces))
+	mux.HandleFunc("/api/v1/agents", s.withAuth(s.handleAgents))
+	mux.HandleFunc("/api/v1/agents/", s.withAuth(s.handleAgentActions))
+	mux.HandleFunc("/api/v1/tools", s.withAuth(s.handleTools))
+	mux.HandleFunc("/api/v1/sessions", s.withAuth(s.handleSessions))
+	mux.HandleFunc("/api/v1/sessions/", s.withAuth(s.handleSessionActions))
+	mux.HandleFunc("/api/v1/tasks", s.withAuth(s.handleTasks))
+	mux.HandleFunc("/api/v1/tasks/", s.withAuth(s.handleTaskActions))
+	mux.HandleFunc("/api/v1/approvals", s.withAuth(s.handleApprovals))
+	mux.HandleFunc("/api/v1/approvals/", s.withAuth(s.handleApprovalActions))
+	mux.HandleFunc("/api/v1/schedules", s.withAuth(s.handleSchedules))
+	mux.HandleFunc("/api/v1/audit-events", s.withAuth(s.handleAuditEvents))
+	return s
+}
+
+func (s *Server) Start() error {
+	return s.http.ListenAndServe()
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.http.Shutdown(ctx)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	resp, err := s.app.Login(req.Email, req.Password)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleMe(w http.ResponseWriter, _ *http.Request, user auth.User) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user":       user,
+		"workspaces": s.app.ListWorkspaces(user.ID),
+	})
+}
+
+func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request, user auth.User) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListWorkspaces(user.ID)})
+	case http.MethodPost:
+		var req struct{ Name string `json:"name"` }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+			writeError(w, http.StatusBadRequest, "invalid payload")
+			return
+		}
+		writeJSON(w, http.StatusCreated, s.app.CreateWorkspace(user.ID, req.Name))
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request, user auth.User) {
+	switch r.Method {
+	case http.MethodGet:
+		workspaceID := r.URL.Query().Get("workspace_id")
+		writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListAgents(workspaceID)})
+	case http.MethodPost:
+		var req app.CreateAgentRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid payload")
+			return
+		}
+		item, err := s.app.CreateAgent(user.ID, req)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, item)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleAgentActions(w http.ResponseWriter, r *http.Request, user auth.User) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/agents/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) < 2 {
+		writeError(w, http.StatusNotFound, "route not found")
+		return
+	}
+	agentID := parts[0]
+	switch {
+	case len(parts) == 2 && parts[1] == "versions" && r.Method == http.MethodPost:
+		item, err := s.app.CreateVersion(user.ID, agentID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, item)
+	case len(parts) == 2 && parts[1] == "publish" && r.Method == http.MethodPost:
+		var req struct {
+			VersionID string `json:"version_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.VersionID == "" {
+			writeError(w, http.StatusBadRequest, "invalid payload")
+			return
+		}
+		if err := s.app.PublishVersion(user.ID, agentID, req.VersionID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "published"})
+	default:
+		writeError(w, http.StatusNotFound, "route not found")
+	}
+}
+
+func (s *Server) handleTools(w http.ResponseWriter, r *http.Request, user auth.User) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListTools(r.URL.Query().Get("workspace_id"))})
+	case http.MethodPost:
+		var req app.CreateToolRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid payload")
+			return
+		}
+		item, err := s.app.CreateTool(user.ID, req)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, item)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req app.CreateSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	item, err := s.app.CreateSession(user.ID, req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, item)
+}
+
+func (s *Server) handleSessionActions(w http.ResponseWriter, r *http.Request, _ auth.User) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/sessions/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 2 && parts[1] == "messages" && r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListMessages(parts[0])})
+		return
+	}
+	writeError(w, http.StatusNotFound, "route not found")
+}
+
+func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req app.ExecuteTaskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	item, err := s.app.ExecuteTask(user.ID, req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, item)
+}
+
+func (s *Server) handleTaskActions(w http.ResponseWriter, r *http.Request, user auth.User) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/tasks/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 1 && r.Method == http.MethodGet {
+		item, err := s.app.GetTask(parts[0])
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"task": item, "steps": s.app.GetTaskSteps(parts[0])})
+		return
+	}
+	if len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
+		item, err := s.app.CancelTask(user.ID, parts[0])
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, item)
+		return
+	}
+	writeError(w, http.StatusNotFound, "route not found")
+}
+
+func (s *Server) handleApprovals(w http.ResponseWriter, r *http.Request, _ auth.User) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListApprovals(r.URL.Query().Get("workspace_id"))})
+}
+
+func (s *Server) handleApprovalActions(w http.ResponseWriter, r *http.Request, user auth.User) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/approvals/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 2 || r.Method != http.MethodPost {
+		writeError(w, http.StatusNotFound, "route not found")
+		return
+	}
+	var (
+		item authzResponse
+		err  error
+	)
+	switch parts[1] {
+	case "approve":
+		item.approval, err = s.app.Approve(user.ID, parts[0], true)
+	case "reject":
+		item.approval, err = s.app.Approve(user.ID, parts[0], false)
+	default:
+		writeError(w, http.StatusNotFound, "route not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, item.approval)
+}
+
+type authzResponse struct {
+	approval any
+}
+
+func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request, user auth.User) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req app.CreateScheduleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	item, err := s.app.CreateSchedule(user.ID, req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, item)
+}
+
+func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request, _ auth.User) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListAuditEvents(r.URL.Query().Get("workspace_id"))})
+}
+
+func (s *Server) withAuth(next func(http.ResponseWriter, *http.Request, auth.User)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			writeJSON(w, http.StatusOK, map[string]any{})
+			return
+		}
+		token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer"))
+		user, err := s.app.Authenticate(token)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		next(w, r, user)
+	}
+}
+
+func writeJSON(w http.ResponseWriter, code int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeError(w http.ResponseWriter, code int, message string) {
+	writeJSON(w, code, map[string]any{"error": message, "timestamp": time.Now().UTC()})
+}
