@@ -9,7 +9,11 @@ import (
 )
 
 func TestLoginAndTaskApprovalFlow(t *testing.T) {
-	application := New(config.Load())
+	application, err := New(config.Load())
+	if err != nil {
+		t.Fatalf("bootstrap app failed: %v", err)
+	}
+	defer application.Close()
 	loginResp, err := application.Login("admin@example.com", "ChangeMe123!")
 	if err != nil {
 		t.Fatalf("login failed: %v", err)

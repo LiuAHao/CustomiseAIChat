@@ -10,14 +10,14 @@
 
 - `events`：进程内事件广播
 - `llm`：LLM Provider 抽象与 mock 实现
-- `memory`：当前内存存储实现
-- `scheduler`：调度相关预留目录
+- `memory`：内存存储实现，主要用于本地快速测试
+- `postgres`：PostgreSQL 持久化实现，包含连接、迁移与种子初始化
 
 ## 当前设计思路
 
 项目现在先用最小依赖跑通主流程，所以：
 
-- 存储用内存实现
+- 存储可按驱动切换为 `memory` 或 `postgres`
 - LLM 用 mock provider
 - 事件广播用进程内 hub
 

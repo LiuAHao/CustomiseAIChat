@@ -11,7 +11,9 @@ services:
       JWT_SECRET: "dev-secret"
       SEED_ADMIN_EMAIL: "admin@example.com"
       SEED_ADMIN_PASSWORD: "ChangeMe123!"
-      STORAGE_DRIVER: "memory"
+      STORAGE_DRIVER: "postgres"
+      POSTGRES_DSN: "postgres://agent:agent@postgres:5432/agent_platform?sslmode=disable"
+      POSTGRES_AUTO_MIGRATE: "true"
     volumes:
       - ../../:/workspace
     ports:
@@ -26,7 +28,9 @@ services:
     command: ["go", "run", "./cmd/worker"]
     environment:
       WORKER_POLL_INTERVAL: "5s"
-      STORAGE_DRIVER: "memory"
+      STORAGE_DRIVER: "postgres"
+      POSTGRES_DSN: "postgres://agent:agent@postgres:5432/agent_platform?sslmode=disable"
+      POSTGRES_AUTO_MIGRATE: "true"
     volumes:
       - ../../:/workspace
     depends_on:

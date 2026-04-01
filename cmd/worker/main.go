@@ -10,7 +10,11 @@ import (
 
 func main() {
 	cfg := config.Load()
-	application := app.New(cfg)
+	application, err := app.New(cfg)
+	if err != nil {
+		log.Fatalf("bootstrap app: %v", err)
+	}
+	defer application.Close()
 	ticker := time.NewTicker(cfg.WorkerPollInterval)
 	defer ticker.Stop()
 

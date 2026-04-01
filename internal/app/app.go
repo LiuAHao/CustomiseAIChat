@@ -20,126 +20,111 @@ import (
 	"go-agent-platform/internal/platform/events"
 	"go-agent-platform/internal/platform/llm"
 	"go-agent-platform/internal/platform/memory"
+	"go-agent-platform/internal/platform/postgres"
 )
 
 type Application struct {
 	Config   config.Config
-	Store    *memory.Store
+	Store    Store
 	Events   *events.Hub
 	Provider llm.Provider
 }
 
-func New(cfg config.Config) *Application {
-	a := &Application{
+func New(cfg config.Config) (*Application, error) {
+	store, err := newStore(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.EnsureSeedData(cfg); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return &Application{
 		Config:   cfg,
-		Store:    memory.NewStore(),
+		Store:    store,
 		Events:   events.NewHub(),
 		Provider: llm.MockProvider{},
-	}
-	a.seed()
-	return a
+	}, nil
 }
 
-func (a *Application) seed() {
-	now := time.Now().UTC()
-	admin := auth.User{
-		ID:           shared.NewID("user"),
-		Email:        a.Config.SeedAdminEmail,
-		Name:         "Platform Admin",
-		PasswordHash: shared.HashPassword(a.Config.SeedAdminPassword),
-		CreatedAt:    now,
+func newStore(cfg config.Config) (Store, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.StorageDriver)) {
+	case "", "memory":
+		return memory.NewStore(), nil
+	case "postgres":
+		return postgres.New(cfg)
+	default:
+		return nil, fmt.Errorf("unsupported storage driver: %s", cfg.StorageDriver)
 	}
-	ws := workspace.Workspace{
-		ID:        shared.NewID("ws"),
-		Name:      "Default Workspace",
-		CreatedBy: admin.ID,
-		CreatedAt: now,
+}
+
+func (a *Application) Close() error {
+	if a.Store == nil {
+		return nil
 	}
-	member := workspace.Membership{
-		ID:          shared.NewID("member"),
-		WorkspaceID: ws.ID,
-		UserID:      admin.ID,
-		Role:        workspace.RoleOwner,
-		CreatedAt:   now,
-	}
-	a.Store.WithWrite(func() {
-		a.Store.Users[admin.ID] = admin
-		a.Store.UsersByEmail[strings.ToLower(admin.Email)] = admin.ID
-		a.Store.Workspaces[ws.ID] = ws
-		a.Store.Memberships[member.ID] = member
-	})
+	return a.Store.Close()
 }
 
 func (a *Application) Login(email, password string) (map[string]any, error) {
-	var user auth.User
-	a.Store.WithRead(func() {
-		if id, ok := a.Store.UsersByEmail[strings.ToLower(email)]; ok {
-			user = a.Store.Users[id]
-		}
-	})
-	if user.ID == "" || user.PasswordHash != shared.HashPassword(password) {
+	user, err := a.Store.FindUserByEmail(email)
+	if err != nil || user.PasswordHash != shared.HashPassword(password) {
 		return nil, errors.New("invalid credentials")
 	}
+
 	token := auth.SessionToken{
 		Token:     shared.NewID("token"),
 		UserID:    user.ID,
 		ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
-	a.Store.WithWrite(func() { a.Store.Tokens[token.Token] = token })
+	if err := a.Store.SaveSessionToken(token); err != nil {
+		return nil, err
+	}
 	a.appendAudit("", user.ID, "auth.login", "user", user.ID, nil)
 	return map[string]any{"token": token.Token, "user": user}, nil
 }
 
 func (a *Application) Authenticate(token string) (auth.User, error) {
-	var sessionToken auth.SessionToken
-	a.Store.WithRead(func() { sessionToken = a.Store.Tokens[token] })
-	if sessionToken.Token == "" || sessionToken.ExpiresAt.Before(time.Now()) {
+	sessionToken, err := a.Store.FindSessionToken(token)
+	if err != nil || sessionToken.ExpiresAt.Before(time.Now()) {
 		return auth.User{}, errors.New("unauthorized")
 	}
-	var user auth.User
-	a.Store.WithRead(func() { user = a.Store.Users[sessionToken.UserID] })
-	if user.ID == "" {
+	user, err := a.Store.FindUserByID(sessionToken.UserID)
+	if err != nil {
 		return auth.User{}, errors.New("unauthorized")
 	}
 	return user, nil
 }
 
 func (a *Application) ListWorkspaces(userID string) []workspace.Workspace {
-	items := make([]workspace.Workspace, 0)
-	a.Store.WithRead(func() {
-		for _, membership := range a.Store.Memberships {
-			if membership.UserID == userID {
-				items = append(items, a.Store.Workspaces[membership.WorkspaceID])
-			}
-		}
-	})
+	items, err := a.Store.ListWorkspacesByUser(userID)
+	if err != nil {
+		return []workspace.Workspace{}
+	}
 	return items
 }
 
 func (a *Application) CreateWorkspace(userID, name string) workspace.Workspace {
+	now := time.Now().UTC()
 	item := workspace.Workspace{
 		ID:        shared.NewID("ws"),
 		Name:      name,
 		CreatedBy: userID,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: now,
 	}
 	member := workspace.Membership{
 		ID:          shared.NewID("member"),
 		WorkspaceID: item.ID,
 		UserID:      userID,
 		Role:        workspace.RoleOwner,
-		CreatedAt:   time.Now().UTC(),
+		CreatedAt:   now,
 	}
-	a.Store.WithWrite(func() {
-		a.Store.Workspaces[item.ID] = item
-		a.Store.Memberships[member.ID] = member
-	})
+	_ = a.Store.CreateWorkspace(item, member)
 	a.appendAudit(item.ID, userID, "workspace.create", "workspace", item.ID, map[string]any{"name": name})
 	return item
 }
 
 func (a *Application) CreateAgent(userID string, req CreateAgentRequest) (agent.Agent, error) {
-	if !a.userInWorkspace(userID, req.WorkspaceID) {
+	if ok, err := a.userInWorkspace(userID, req.WorkspaceID); err != nil || !ok {
 		return agent.Agent{}, errors.New("workspace access denied")
 	}
 	now := time.Now().UTC()
@@ -156,36 +141,29 @@ func (a *Application) CreateAgent(userID string, req CreateAgentRequest) (agent.
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
-	a.Store.WithWrite(func() { a.Store.Agents[item.ID] = item })
+	if err := a.Store.SaveAgent(item); err != nil {
+		return agent.Agent{}, err
+	}
 	a.appendAudit(req.WorkspaceID, userID, "agent.create", "agent", item.ID, map[string]any{"name": item.Name})
 	return item, nil
 }
 
 func (a *Application) ListAgents(workspaceID string) []agent.Agent {
-	items := make([]agent.Agent, 0)
-	a.Store.WithRead(func() {
-		for _, item := range a.Store.Agents {
-			if item.WorkspaceID == workspaceID {
-				items = append(items, item)
-			}
-		}
-	})
+	items, err := a.Store.ListAgents(workspaceID)
+	if err != nil {
+		return []agent.Agent{}
+	}
 	return items
 }
 
 func (a *Application) CreateVersion(userID, agentID string) (agent.Version, error) {
-	var current agent.Agent
-	count := 0
-	a.Store.WithRead(func() {
-		current = a.Store.Agents[agentID]
-		for _, version := range a.Store.AgentVersions {
-			if version.AgentID == agentID {
-				count++
-			}
-		}
-	})
-	if current.ID == "" {
+	current, err := a.Store.FindAgentByID(agentID)
+	if err != nil {
 		return agent.Version{}, errors.New("agent not found")
+	}
+	count, err := a.Store.CountAgentVersions(agentID)
+	if err != nil {
+		return agent.Version{}, err
 	}
 	snapshot := map[string]any{
 		"name":           current.Name,
@@ -203,30 +181,33 @@ func (a *Application) CreateVersion(userID, agentID string) (agent.Version, erro
 		CreatedBy:     userID,
 		CreatedAt:     time.Now().UTC(),
 	}
-	a.Store.WithWrite(func() { a.Store.AgentVersions[version.ID] = version })
+	if err := a.Store.SaveAgentVersion(version); err != nil {
+		return agent.Version{}, err
+	}
 	a.appendAudit(current.WorkspaceID, userID, "agent.version.create", "agent_version", version.ID, map[string]any{"agent_id": agentID})
 	return version, nil
 }
 
 func (a *Application) PublishVersion(userID, agentID, versionID string) error {
-	var current agent.Agent
-	var version agent.Version
-	a.Store.WithRead(func() {
-		current = a.Store.Agents[agentID]
-		version = a.Store.AgentVersions[versionID]
-	})
-	if current.ID == "" || version.ID == "" || version.AgentID != agentID {
+	current, err := a.Store.FindAgentByID(agentID)
+	if err != nil {
+		return errors.New("agent or version not found")
+	}
+	version, err := a.Store.FindAgentVersion(versionID)
+	if err != nil || version.AgentID != agentID {
 		return errors.New("agent or version not found")
 	}
 	current.PublishedVerID = versionID
 	current.UpdatedAt = time.Now().UTC()
-	a.Store.WithWrite(func() { a.Store.Agents[agentID] = current })
+	if err := a.Store.UpdateAgent(current); err != nil {
+		return err
+	}
 	a.appendAudit(current.WorkspaceID, userID, "agent.publish", "agent", agentID, map[string]any{"version_id": versionID})
 	return nil
 }
 
 func (a *Application) CreateTool(userID string, req CreateToolRequest) (tool.Tool, error) {
-	if !a.userInWorkspace(userID, req.WorkspaceID) {
+	if ok, err := a.userInWorkspace(userID, req.WorkspaceID); err != nil || !ok {
 		return tool.Tool{}, errors.New("workspace access denied")
 	}
 	item := tool.Tool{
@@ -241,25 +222,23 @@ func (a *Application) CreateTool(userID string, req CreateToolRequest) (tool.Too
 		CreatedBy:        userID,
 		CreatedAt:        time.Now().UTC(),
 	}
-	a.Store.WithWrite(func() { a.Store.Tools[item.ID] = item })
+	if err := a.Store.SaveTool(item); err != nil {
+		return tool.Tool{}, err
+	}
 	a.appendAudit(req.WorkspaceID, userID, "tool.create", "tool", item.ID, map[string]any{"name": item.Name})
 	return item, nil
 }
 
 func (a *Application) ListTools(workspaceID string) []tool.Tool {
-	items := make([]tool.Tool, 0)
-	a.Store.WithRead(func() {
-		for _, item := range a.Store.Tools {
-			if item.WorkspaceID == workspaceID {
-				items = append(items, item)
-			}
-		}
-	})
+	items, err := a.Store.ListTools(workspaceID)
+	if err != nil {
+		return []tool.Tool{}
+	}
 	return items
 }
 
 func (a *Application) CreateSession(userID string, req CreateSessionRequest) (session.Session, error) {
-	if !a.userInWorkspace(userID, req.WorkspaceID) {
+	if ok, err := a.userInWorkspace(userID, req.WorkspaceID); err != nil || !ok {
 		return session.Session{}, errors.New("workspace access denied")
 	}
 	item := session.Session{
@@ -271,19 +250,23 @@ func (a *Application) CreateSession(userID string, req CreateSessionRequest) (se
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
-	a.Store.WithWrite(func() { a.Store.Sessions[item.ID] = item })
+	if err := a.Store.SaveSession(item); err != nil {
+		return session.Session{}, err
+	}
 	a.appendAudit(req.WorkspaceID, userID, "session.create", "session", item.ID, nil)
 	return item, nil
 }
 
 func (a *Application) ListMessages(sessionID string) []session.Message {
-	var items []session.Message
-	a.Store.WithRead(func() { items = append(items, a.Store.Messages[sessionID]...) })
+	items, err := a.Store.ListMessages(sessionID)
+	if err != nil {
+		return []session.Message{}
+	}
 	return items
 }
 
 func (a *Application) CreateSchedule(userID string, req CreateScheduleRequest) (task.Schedule, error) {
-	if !a.userInWorkspace(userID, req.WorkspaceID) {
+	if ok, err := a.userInWorkspace(userID, req.WorkspaceID); err != nil || !ok {
 		return task.Schedule{}, errors.New("workspace access denied")
 	}
 	nextRunAt, interval, err := parseSchedule(req.Cron)
@@ -302,7 +285,9 @@ func (a *Application) CreateSchedule(userID string, req CreateScheduleRequest) (
 		CreatedBy:   userID,
 		CreatedAt:   time.Now().UTC(),
 	}
-	a.Store.WithWrite(func() { a.Store.Schedules[item.ID] = item })
+	if err := a.Store.SaveSchedule(item); err != nil {
+		return task.Schedule{}, err
+	}
 	a.appendAudit(req.WorkspaceID, userID, "schedule.create", "schedule", item.ID, map[string]any{"cron": req.Cron})
 	return item, nil
 }
@@ -320,14 +305,10 @@ func parseSchedule(expr string) (time.Time, time.Duration, error) {
 
 func (a *Application) RunDueSchedules() {
 	now := time.Now().UTC()
-	due := make([]task.Schedule, 0)
-	a.Store.WithRead(func() {
-		for _, schedule := range a.Store.Schedules {
-			if !schedule.NextRunAt.After(now) {
-				due = append(due, schedule)
-			}
-		}
-	})
+	due, err := a.Store.ListDueSchedules(now)
+	if err != nil {
+		return
+	}
 	for _, schedule := range due {
 		_, _ = a.ExecuteTask(schedule.CreatedBy, ExecuteTaskRequest{
 			WorkspaceID: schedule.WorkspaceID,
@@ -340,21 +321,22 @@ func (a *Application) RunDueSchedules() {
 			continue
 		}
 		schedule.NextRunAt = time.Now().UTC().Add(dur)
-		a.Store.WithWrite(func() { a.Store.Schedules[schedule.ID] = schedule })
+		_ = a.Store.UpdateSchedule(schedule)
 	}
 }
 
 func (a *Application) ExecuteTask(userID string, req ExecuteTaskRequest) (task.Task, error) {
-	if !a.userInWorkspace(userID, req.WorkspaceID) {
+	if ok, err := a.userInWorkspace(userID, req.WorkspaceID); err != nil || !ok {
 		return task.Task{}, errors.New("workspace access denied")
 	}
-	agentRecord, ok := a.getAgent(req.AgentID)
-	if !ok {
+	agentRecord, err := a.Store.FindAgentByID(req.AgentID)
+	if err != nil {
 		return task.Task{}, errors.New("agent not found")
 	}
 	if agentRecord.PublishedVerID == "" {
 		return task.Task{}, errors.New("agent has no published version")
 	}
+
 	now := time.Now().UTC()
 	sessionID := req.SessionID
 	if sessionID == "" {
@@ -368,6 +350,7 @@ func (a *Application) ExecuteTask(userID string, req ExecuteTaskRequest) (task.T
 		}
 		sessionID = created.ID
 	}
+
 	job := task.Task{
 		ID:          shared.NewID("task"),
 		TraceID:     shared.NewID("trace"),
@@ -381,17 +364,20 @@ func (a *Application) ExecuteTask(userID string, req ExecuteTaskRequest) (task.T
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	a.Store.WithWrite(func() {
-		a.Store.Tasks[job.ID] = job
-		a.Store.Messages[sessionID] = append(a.Store.Messages[sessionID], session.Message{
-			ID:        shared.NewID("msg"),
-			SessionID: sessionID,
-			Role:      session.RoleUser,
-			Content:   req.Prompt,
-			TraceID:   job.TraceID,
-			CreatedAt: now,
-		})
-	})
+	if err := a.Store.SaveTask(job); err != nil {
+		return task.Task{}, err
+	}
+	if err := a.Store.SaveMessage(session.Message{
+		ID:        shared.NewID("msg"),
+		SessionID: sessionID,
+		Role:      session.RoleUser,
+		Content:   req.Prompt,
+		TraceID:   job.TraceID,
+		CreatedAt: now,
+	}); err != nil {
+		return task.Task{}, err
+	}
+
 	a.appendAudit(req.WorkspaceID, userID, "task.create", "task", job.ID, map[string]any{"agent_id": req.AgentID})
 	if req.Async {
 		go a.runTask(job.ID)
@@ -408,13 +394,12 @@ func (a *Application) runTask(taskID string) {
 	}
 	job.Status = task.StatusRunning
 	job.UpdatedAt = time.Now().UTC()
-	a.Store.WithWrite(func() { a.Store.Tasks[job.ID] = job })
+	_ = a.Store.UpdateTask(job)
 	a.publishEvent("task.started", job.ID, job.TraceID, map[string]any{"task_id": job.ID})
 
-	steps := make([]task.Step, 0)
 	seq := 1
 	for _, name := range a.Provider.Plan(job.Prompt) {
-		steps = append(steps, task.Step{
+		step := task.Step{
 			ID:        shared.NewID("step"),
 			TaskID:    job.ID,
 			Name:      name,
@@ -423,15 +408,16 @@ func (a *Application) runTask(taskID string) {
 			Sequence:  seq,
 			CreatedAt: time.Now().UTC(),
 			UpdatedAt: time.Now().UTC(),
-		})
+		}
+		_ = a.Store.SaveTaskStep(step)
 		a.publishEvent("task.step.completed", job.ID, job.TraceID, map[string]any{"task_id": job.ID, "step_name": name})
 		seq++
 	}
 
 	toolOutputs := make([]string, 0, len(job.ToolCalls))
 	for _, call := range job.ToolCalls {
-		t, ok := a.getTool(call.ToolID)
-		if !ok || !t.Enabled {
+		t, err := a.Store.FindToolByID(call.ToolID)
+		if err != nil || !t.Enabled {
 			a.failTask(job.ID, fmt.Sprintf("tool %s not available", call.ToolID))
 			return
 		}
@@ -446,6 +432,7 @@ func (a *Application) runTask(taskID string) {
 		}
 		seq++
 		a.publishEvent("task.step.started", job.ID, job.TraceID, map[string]any{"task_id": job.ID, "step_name": step.Name})
+
 		if t.RequiresApproval {
 			step.Status = task.StepWaiting
 			appr := approval.Approval{
@@ -461,20 +448,22 @@ func (a *Application) runTask(taskID string) {
 			job.Status = task.StatusWaitingApproval
 			job.ApprovalID = appr.ID
 			job.UpdatedAt = time.Now().UTC()
-			a.Store.WithWrite(func() {
-				a.Store.Approvals[appr.ID] = appr
-				a.Store.Tasks[job.ID] = job
-				a.Store.TaskSteps[job.ID] = append(append(a.Store.TaskSteps[job.ID], steps...), step)
-			})
+
+			_ = a.Store.SaveTaskStep(step)
+			_ = a.Store.SaveApproval(appr)
+			_ = a.Store.UpdateTask(job)
+
 			a.appendAudit(job.WorkspaceID, job.CreatedBy, "approval.create", "approval", appr.ID, map[string]any{"tool_id": t.ID, "task_id": job.ID})
 			a.publishEvent("task.waiting_approval", job.ID, job.TraceID, map[string]any{"task_id": job.ID, "approval_id": appr.ID, "reason": appr.Reason})
 			return
 		}
+
 		output, outputJSON := a.executeTool(t, call.Input)
 		step.Status = task.StepCompleted
 		step.Output = output
+		step.UpdatedAt = time.Now().UTC()
 		toolOutputs = append(toolOutputs, output)
-		a.Store.WithWrite(func() { a.Store.TaskSteps[job.ID] = append(a.Store.TaskSteps[job.ID], step) })
+		_ = a.Store.SaveTaskStep(step)
 		a.publishEvent("task.stream.delta", job.ID, job.TraceID, map[string]any{"task_id": job.ID, "delta": outputJSON})
 	}
 
@@ -482,25 +471,21 @@ func (a *Application) runTask(taskID string) {
 	job.Status = task.StatusCompleted
 	job.Result = result
 	job.UpdatedAt = time.Now().UTC()
-	a.Store.WithWrite(func() {
-		a.Store.TaskSteps[job.ID] = append(a.Store.TaskSteps[job.ID], steps...)
-		a.Store.Tasks[job.ID] = job
-		a.Store.Messages[job.SessionID] = append(a.Store.Messages[job.SessionID], session.Message{
-			ID:        shared.NewID("msg"),
-			SessionID: job.SessionID,
-			Role:      session.RoleAssistant,
-			Content:   result,
-			TraceID:   job.TraceID,
-			CreatedAt: time.Now().UTC(),
-		})
+	_ = a.Store.UpdateTask(job)
+	_ = a.Store.SaveMessage(session.Message{
+		ID:        shared.NewID("msg"),
+		SessionID: job.SessionID,
+		Role:      session.RoleAssistant,
+		Content:   result,
+		TraceID:   job.TraceID,
+		CreatedAt: time.Now().UTC(),
 	})
 	a.publishEvent("task.completed", job.ID, job.TraceID, map[string]any{"task_id": job.ID, "result": result})
 }
 
 func (a *Application) Approve(userID, approvalID string, approved bool) (approval.Approval, error) {
-	var item approval.Approval
-	a.Store.WithRead(func() { item = a.Store.Approvals[approvalID] })
-	if item.ID == "" {
+	item, err := a.Store.FindApprovalByID(approvalID)
+	if err != nil {
 		return approval.Approval{}, errors.New("approval not found")
 	}
 	if item.Status != approval.StatusPending {
@@ -513,7 +498,9 @@ func (a *Application) Approve(userID, approvalID string, approved bool) (approva
 	}
 	item.DecisionBy = userID
 	item.DecisionAt = time.Now().UTC()
-	a.Store.WithWrite(func() { a.Store.Approvals[item.ID] = item })
+	if err := a.Store.UpdateApproval(item); err != nil {
+		return approval.Approval{}, err
+	}
 	if approved {
 		a.resumeApprovedTask(item.TaskID, item.StepID)
 	} else {
@@ -528,8 +515,10 @@ func (a *Application) resumeApprovedTask(taskID, stepID string) {
 	if err != nil {
 		return
 	}
-	var steps []task.Step
-	a.Store.WithRead(func() { steps = append(steps, a.Store.TaskSteps[job.ID]...) })
+	steps, err := a.Store.ListTaskSteps(job.ID)
+	if err != nil {
+		return
+	}
 	for idx := range steps {
 		if steps[idx].ID == stepID {
 			steps[idx].Status = task.StepCompleted
@@ -540,17 +529,15 @@ func (a *Application) resumeApprovedTask(taskID, stepID string) {
 	job.Status = task.StatusCompleted
 	job.Result = "task resumed after approval"
 	job.UpdatedAt = time.Now().UTC()
-	a.Store.WithWrite(func() {
-		a.Store.TaskSteps[job.ID] = steps
-		a.Store.Tasks[job.ID] = job
-		a.Store.Messages[job.SessionID] = append(a.Store.Messages[job.SessionID], session.Message{
-			ID:        shared.NewID("msg"),
-			SessionID: job.SessionID,
-			Role:      session.RoleAssistant,
-			Content:   job.Result,
-			TraceID:   job.TraceID,
-			CreatedAt: time.Now().UTC(),
-		})
+	_ = a.Store.ReplaceTaskSteps(job.ID, steps)
+	_ = a.Store.UpdateTask(job)
+	_ = a.Store.SaveMessage(session.Message{
+		ID:        shared.NewID("msg"),
+		SessionID: job.SessionID,
+		Role:      session.RoleAssistant,
+		Content:   job.Result,
+		TraceID:   job.TraceID,
+		CreatedAt: time.Now().UTC(),
 	})
 	a.publishEvent("task.completed", job.ID, job.TraceID, map[string]any{"task_id": job.ID, "result": job.Result})
 }
@@ -562,47 +549,42 @@ func (a *Application) CancelTask(userID, taskID string) (task.Task, error) {
 	}
 	job.Status = task.StatusCanceled
 	job.UpdatedAt = time.Now().UTC()
-	a.Store.WithWrite(func() { a.Store.Tasks[job.ID] = job })
+	if err := a.Store.UpdateTask(job); err != nil {
+		return task.Task{}, err
+	}
 	a.appendAudit(job.WorkspaceID, userID, "task.cancel", "task", taskID, nil)
 	return job, nil
 }
 
 func (a *Application) GetTask(taskID string) (task.Task, error) {
-	var item task.Task
-	a.Store.WithRead(func() { item = a.Store.Tasks[taskID] })
-	if item.ID == "" {
+	item, err := a.Store.FindTaskByID(taskID)
+	if err != nil {
 		return task.Task{}, errors.New("task not found")
 	}
 	return item, nil
 }
 
 func (a *Application) GetTaskSteps(taskID string) []task.Step {
-	var steps []task.Step
-	a.Store.WithRead(func() { steps = append(steps, a.Store.TaskSteps[taskID]...) })
-	return steps
+	items, err := a.Store.ListTaskSteps(taskID)
+	if err != nil {
+		return []task.Step{}
+	}
+	return items
 }
 
 func (a *Application) ListApprovals(workspaceID string) []approval.Approval {
-	items := make([]approval.Approval, 0)
-	a.Store.WithRead(func() {
-		for _, item := range a.Store.Approvals {
-			if workspaceID == "" || item.WorkspaceID == workspaceID {
-				items = append(items, item)
-			}
-		}
-	})
+	items, err := a.Store.ListApprovals(workspaceID)
+	if err != nil {
+		return []approval.Approval{}
+	}
 	return items
 }
 
 func (a *Application) ListAuditEvents(workspaceID string) []audit.Event {
-	items := make([]audit.Event, 0)
-	a.Store.WithRead(func() {
-		for _, item := range a.Store.AuditEvents {
-			if workspaceID == "" || item.WorkspaceID == workspaceID {
-				items = append(items, item)
-			}
-		}
-	})
+	items, err := a.Store.ListAuditEvents(workspaceID)
+	if err != nil {
+		return []audit.Event{}
+	}
 	return items
 }
 
@@ -620,33 +602,12 @@ func (a *Application) failTask(taskID, reason string) {
 	job.Status = task.StatusFailed
 	job.Error = reason
 	job.UpdatedAt = time.Now().UTC()
-	a.Store.WithWrite(func() { a.Store.Tasks[job.ID] = job })
+	_ = a.Store.UpdateTask(job)
 	a.publishEvent("task.failed", job.ID, job.TraceID, map[string]any{"task_id": job.ID, "error": reason})
 }
 
-func (a *Application) userInWorkspace(userID, workspaceID string) bool {
-	found := false
-	a.Store.WithRead(func() {
-		for _, membership := range a.Store.Memberships {
-			if membership.UserID == userID && membership.WorkspaceID == workspaceID {
-				found = true
-				return
-			}
-		}
-	})
-	return found
-}
-
-func (a *Application) getAgent(agentID string) (agent.Agent, bool) {
-	var item agent.Agent
-	a.Store.WithRead(func() { item = a.Store.Agents[agentID] })
-	return item, item.ID != ""
-}
-
-func (a *Application) getTool(toolID string) (tool.Tool, bool) {
-	var item tool.Tool
-	a.Store.WithRead(func() { item = a.Store.Tools[toolID] })
-	return item, item.ID != ""
+func (a *Application) userInWorkspace(userID, workspaceID string) (bool, error) {
+	return a.Store.UserInWorkspace(userID, workspaceID)
 }
 
 func (a *Application) appendAudit(workspaceID, actorID, action, resource, resourceID string, metadata map[string]any) {
@@ -660,7 +621,7 @@ func (a *Application) appendAudit(workspaceID, actorID, action, resource, resour
 		Metadata:    metadata,
 		CreatedAt:   time.Now().UTC(),
 	}
-	a.Store.WithWrite(func() { a.Store.AuditEvents = append(a.Store.AuditEvents, entry) })
+	_ = a.Store.SaveAuditEvent(entry)
 }
 
 func (a *Application) publishEvent(eventType, taskID, traceID string, payload map[string]any) {
@@ -711,13 +672,13 @@ type CreateSessionRequest struct {
 }
 
 type ExecuteTaskRequest struct {
-	WorkspaceID string          `json:"workspace_id"`
-	AgentID     string          `json:"agent_id"`
-	SessionID   string          `json:"session_id"`
-	SessionTitle string         `json:"session_title"`
-	Prompt      string          `json:"prompt"`
-	Async       bool            `json:"async"`
-	ToolCalls   []tool.CallSpec `json:"tool_calls"`
+	WorkspaceID  string          `json:"workspace_id"`
+	AgentID      string          `json:"agent_id"`
+	SessionID    string          `json:"session_id"`
+	SessionTitle string          `json:"session_title"`
+	Prompt       string          `json:"prompt"`
+	Async        bool            `json:"async"`
+	ToolCalls    []tool.CallSpec `json:"tool_calls"`
 }
 
 type CreateScheduleRequest struct {

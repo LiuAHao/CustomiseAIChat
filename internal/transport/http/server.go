@@ -18,6 +18,17 @@ type Server struct {
 	wsServer *wstransport.Server
 }
 
+func NewHandler(application *app.Application) http.Handler {
+	wsServer := wstransport.New(application.Events)
+	mux := http.NewServeMux()
+	server := &Server{
+		app:      application,
+		wsServer: wsServer,
+	}
+	server.registerRoutes(mux)
+	return mux
+}
+
 func New(addr string, application *app.Application) *Server {
 	wsServer := wstransport.New(application.Events)
 	mux := http.NewServeMux()
@@ -29,8 +40,13 @@ func New(addr string, application *app.Application) *Server {
 			Handler: mux,
 		},
 	}
+	s.registerRoutes(mux)
+	return s
+}
+
+func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/healthz", s.handleHealth)
-	mux.HandleFunc("/ws", wsServer.Handle)
+	mux.HandleFunc("/ws", s.wsServer.Handle)
 	mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("/api/v1/me", s.withAuth(s.handleMe))
 	mux.HandleFunc("/api/v1/workspaces", s.withAuth(s.handleWorkspaces))
@@ -45,7 +61,6 @@ func New(addr string, application *app.Application) *Server {
 	mux.HandleFunc("/api/v1/approvals/", s.withAuth(s.handleApprovalActions))
 	mux.HandleFunc("/api/v1/schedules", s.withAuth(s.handleSchedules))
 	mux.HandleFunc("/api/v1/audit-events", s.withAuth(s.handleAuditEvents))
-	return s
 }
 
 func (s *Server) Start() error {
