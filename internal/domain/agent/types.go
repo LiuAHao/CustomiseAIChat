@@ -9,6 +9,7 @@ type Agent struct {
 	Description    string    `json:"description"`
 	SystemPrompt   string    `json:"system_prompt"`
 	Model          string    `json:"model"`
+	SkillPolicy    []string  `json:"skill_policy"`
 	ToolPolicy     []string  `json:"tool_policy"`
 	RuntimePolicy  string    `json:"runtime_policy"`
 	PublishedVerID string    `json:"published_version_id,omitempty"`

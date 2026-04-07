@@ -2,10 +2,16 @@ package tool
 
 import "time"
 
+const (
+	ScopePlatform = "platform"
+	ScopePersonal = "personal"
+)
+
 type Tool struct {
 	ID               string                 `json:"id"`
 	WorkspaceID      string                 `json:"workspace_id"`
 	Name             string                 `json:"name"`
+	Scope            string                 `json:"scope"`
 	Description      string                 `json:"description"`
 	Schema           map[string]any         `json:"schema"`
 	Config           map[string]any         `json:"config"`

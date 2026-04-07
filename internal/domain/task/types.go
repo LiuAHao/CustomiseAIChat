@@ -33,6 +33,8 @@ type Task struct {
 	WorkspaceID string          `json:"workspace_id"`
 	AgentID     string          `json:"agent_id"`
 	SessionID   string          `json:"session_id"`
+	Model       string          `json:"model,omitempty"`
+	Reasoning   string          `json:"reasoning,omitempty"`
 	Prompt      string          `json:"prompt"`
 	Status      Status          `json:"status"`
 	Result      string          `json:"result,omitempty"`

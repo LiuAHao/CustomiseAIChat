@@ -1,428 +1,829 @@
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  executeTask,
+  fetchMessages,
+  fetchSessions,
+  installSkill,
+  installTool,
+  uninstallSkill,
+  uninstallTool,
+  type AgentItem,
+  type CatalogResponse,
+  type CreateAgentPayload,
+  type CreateModelPayload,
+  type CreateSkillPayload,
+  type CreateToolPayload,
+  type MessageItem,
+  type ModelItem,
+  type SessionItem,
+  type SkillItem,
+  type ToolItem,
+  type UserInfo,
+} from '../api'
 import type { ViewKey } from '../App'
+import { AppIcon, type AppIconKey } from './AppIcon'
 
 type DashboardProps = {
-  activeAgentId: string
+  activeAgent: AgentItem | null
+  agents: AgentItem[]
   currentView: ViewKey
+  error: string
+  loading: boolean
+  models: ModelItem[]
+  onCreateAgent: (payload: CreateAgentPayload) => Promise<void>
+  onCreateModel: (payload: CreateModelPayload) => Promise<void>
+  onCreateSkill: (payload: CreateSkillPayload) => Promise<void>
+  onCreateTool: (payload: CreateToolPayload) => Promise<void>
+  onRefresh: () => Promise<void>
+  skillCatalog: CatalogResponse<SkillItem>
+  token: string
+  toolCatalog: CatalogResponse<ToolItem>
+  user: UserInfo | null
 }
 
-const agentContent = {
-  invest: {
-    title: '开始构建',
-    workspace: 'go-agent-platform',
-    subtitle: '围绕投研、多 agent 编排与工具接入开始你的下一次执行。',
-    cards: [
-      { icon: 'mcp', title: '绑定 MCP 服务', desc: '连接搜索、数据库、文件系统与浏览器能力。' },
-      { icon: 'skill', title: '配置新技能', desc: '为 Agent 装载技能并设定调用边界。' },
-      { icon: 'deploy', title: '发布运行环境', desc: '将 Agent 封装成 API 服务或后台任务。' },
-    ],
-  },
-  refactor: {
-    title: '重构控制台',
-    workspace: 'web/console',
-    subtitle: '当前 Agent 聚焦 UI 重建、信息架构收束和桌面控制台交互。',
-    cards: [
-      { icon: 'code', title: '拆分组件结构', desc: '按 Sidebar、Dashboard、Auth 页面组织文件。' },
-      { icon: 'skill', title: '对齐技能入口', desc: '让技能页与 Agent 主流程保持同级。' },
-      { icon: 'deploy', title: '构建验证', desc: '输出可运行页面并验证打包流程。' },
-    ],
-  },
-  connector: {
-    title: '连接工具域',
-    workspace: 'internal/mcp',
-    subtitle: '聚焦 MCP server 配置、健康探针和外部资源可见性。',
-    cards: [
-      { icon: 'mcp', title: '配置服务注册', desc: '新增和编辑 MCP 服务元数据与状态。' },
-      { icon: 'code', title: '管理权限', desc: '区分默认权限、高权审批和只读访问。' },
-      { icon: 'deploy', title: '监控连接', desc: '实时查看心跳、失败率和降级策略。' },
-    ],
-  },
-  quant: {
-    title: '启动策略实验',
-    workspace: 'quant-lab',
-    subtitle: '从策略假设、回测执行到报告生成形成闭环。',
-    cards: [
-      { icon: 'code', title: '创建回测任务', desc: '指定数据区间、手续费和风控约束。' },
-      { icon: 'skill', title: '挂载研究技能', desc: '注入因子解释、结果总结和报告撰写。' },
-      { icon: 'deploy', title: '生成实验流水', desc: '把实验记录回写到项目知识库。' },
-    ],
-  },
-  research: {
-    title: '开启行业研究',
-    workspace: 'research-hub',
-    subtitle: '从问题定义、信息采集到多源汇总，形成长期研究 Agent。',
-    cards: [
-      { icon: 'mcp', title: '接入信息源', desc: '挂载网页搜索、文档读取和数据库查询。' },
-      { icon: 'skill', title: '定义研究技能', desc: '拆成搜集、筛选、总结、校验四层。' },
-      { icon: 'deploy', title: '生成自动化', desc: '设为定时巡检与日报输出。' },
-    ],
-  },
-} as const
-
-export function AgentDashboard({ activeAgentId, currentView }: DashboardProps) {
-  if (currentView === 'skills') {
-    return <FeatureWorkspace title="技能与应用" subtitle="管理技能包、调用链路和作用范围，让 agent 能力以可治理方式装载。" type="skill" />
+export function AgentDashboard(props: DashboardProps) {
+  switch (props.currentView) {
+    case 'skills':
+      return <SkillsPage {...props} />
+    case 'mcp':
+      return <McpPage {...props} />
+    case 'models':
+      return <ModelsPage {...props} />
+    case 'settings':
+      return <SettingsPage user={props.user} />
+    case 'agent-chat':
+      return <AgentChatPage {...props} />
+    default:
+      return <CreateAgentPage {...props} />
   }
+}
 
-  if (currentView === 'mcp') {
-    return <FeatureWorkspace title="MCP 配置" subtitle="连接外部服务、查看健康度，并管理默认权限与降级策略。" type="mcp" />
+function CreateAgentPage(props: DashboardProps) {
+  const { error, loading, models, onCreateAgent, skillCatalog, toolCatalog } = props
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [systemPrompt, setSystemPrompt] = useState('')
+  const [model, setModel] = useState('')
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([])
+  const [selectedTools, setSelectedTools] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    if (!model && models.length > 0) {
+      setModel(models.find((item) => item.is_default)?.model_key ?? models[0]?.model_key ?? '')
+    }
+  }, [model, models])
+
+  async function submit() {
+    if (!name.trim()) return setMessage('请先填写 Agent 名称。')
+    if (!model.trim()) return setMessage('请先选择模型。')
+    setSaving(true)
+    setMessage('')
+    try {
+      await onCreateAgent({
+        name: name.trim(),
+        description: description.trim(),
+        system_prompt: systemPrompt.trim(),
+        model: model.trim(),
+        skill_policy: selectedSkills,
+        tool_policy: selectedTools,
+        runtime_policy: 'default',
+      })
+      setName('')
+      setDescription('')
+      setSystemPrompt('')
+      setSelectedSkills([])
+      setSelectedTools([])
+      setMessage('Agent 已创建。')
+    } catch (currentError) {
+      setMessage(currentError instanceof Error ? currentError.message : '创建 Agent 失败')
+    } finally {
+      setSaving(false)
+    }
   }
-
-  if (currentView === 'models') {
-    return <FeatureWorkspace title="模型配置" subtitle="配置默认模型、推理档位、回退链路与不同 agent 的模型分配策略。" type="models" />
-  }
-
-  if (currentView === 'settings') {
-    return <FeatureWorkspace title="系统设置" subtitle="统一管理语言、工作区偏好、通知方式和平台默认行为。" type="settings" />
-  }
-
-  const content = agentContent[activeAgentId as keyof typeof agentContent] ?? agentContent.invest
 
   return (
-    <div className="dashboard-shell">
-      <div className="dashboard-center">
-        <div className="hero-mark">{renderIcon('spark')}</div>
-        <h1>{content.title}</h1>
-        <p className="dashboard-intro">{content.subtitle}</p>
-      </div>
-
-      <div className="quick-card-strip">
-        {content.cards.map((card) => (
-          <button key={card.title} className="quick-card" type="button">
-            <div className={`quick-card-icon ${card.icon}`}>{renderIcon(card.icon)}</div>
-            <strong>{card.title}</strong>
-            <span>{card.desc}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="composer-shell">
-        <div className="composer-input-area">
-          <textarea
-            defaultValue=""
-            placeholder="询问 Agent 关于任何事，@ 添加文件，/ 调用命令，$ 触发技能，# 选择 MCP 连接器"
-          />
-        </div>
-
-        <div className="composer-footer">
-          <div className="composer-left">
-            <button className="composer-tool" type="button">
-              <span className="composer-tool-icon">＋</span>
-            </button>
-            <button className="composer-select" type="button">
-              <span className="composer-select-icon">{renderIcon('bolt')}</span>
-              <span>GPT-5.4</span>
-              <span>▾</span>
-            </button>
-            <button className="composer-select" type="button">
-              <span>中</span>
-              <span>▾</span>
-            </button>
-          </div>
-
-          <div className="composer-right">
-            <button className="composer-voice" type="button">
-              {renderIcon('mic')}
-            </button>
-            <button className="composer-send" type="button">
-              ↑
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="dashboard-statusbar">
-        <div className="status-item">
-          <span>{renderIcon('screen')}</span>
-          <span>本地</span>
-          <span>▾</span>
-        </div>
-        <div className="status-item">
-          <span>{renderIcon('shield')}</span>
-          <span>默认权限</span>
-          <span>▾</span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-type FeatureWorkspaceProps = {
-  title: string
-  subtitle: string
-  type: 'skill' | 'mcp' | 'models' | 'settings'
-}
-
-function FeatureWorkspace({ title, subtitle, type }: FeatureWorkspaceProps) {
-  const summaryCards =
-    type === 'skill'
-      ? [
-          ['已装载技能', '18', '按 agent 角色自动继承'],
-          ['运行中技能链', '6', '规划、检索、执行、审计'],
-          ['待发布变更', '3', '有新版本等待灰度'],
-        ]
-      : type === 'mcp'
-        ? [
-          ['在线连接', '9', '全部可被 agent 调用'],
-          ['待授权服务', '2', 'GitHub 与企业知识库'],
-          ['平均延迟', '184ms', '近一小时健康探针'],
-        ]
-        : type === 'models'
-          ? [
-            ['默认主模型', 'GPT-5.4', '面向复杂规划与构建'],
-            ['回退模型', 'GPT-5.4-mini', '成本优先的执行档'],
-            ['推理档位', 'medium', '平台默认推理深度'],
-          ]
-          : [
-            ['界面语言', '中文', '注释与文案默认中文'],
-            ['默认权限', '工作区读写', '高风险命令仍需审批'],
-            ['通知通道', '站内提醒', '失败和审批会同步提示'],
-          ]
-
-  const detailCards =
-    type === 'skill'
-      ? [
-          ['技能包编排', '为不同 agent 绑定不同技能集合，支持启停、继承和版本说明。'],
-          ['触发规则', '定义 `$技能名`、自动匹配和按任务路由的触发方式。'],
-          ['发布与灰度', '先在测试 agent 上启用，再逐步扩散到生产 agent。'],
-        ]
-      : type === 'mcp'
-        ? [
-          ['服务注册', '配置 MCP 名称、地址、说明和能力标签，统一纳管。'],
-          ['权限与配额', '为不同 agent 指定可调用范围，并限制高成本工具的并发。'],
-          ['健康巡检', '记录延迟、失败率和最近错误，便于快速定位接入问题。'],
-        ]
-        : type === 'models'
-          ? [
-            ['模型路由', '按任务类型选择模型，例如规划、编码、审核各用不同主模型。'],
-            ['成本控制', '可设置 token 上限、自动回退模型和超预算提醒。'],
-            ['Agent 覆盖', '给特定 agent 单独配置模型与推理档位，不影响平台默认值。'],
-          ]
-          : [
-            ['平台偏好', '配置语言、默认工作区、默认分支和命令输入习惯。'],
-            ['审批策略', '定义哪些命令直接执行，哪些命令必须人工确认。'],
-            ['通知设置', '控制站内提醒、告警提示和执行完成后的通知方式。'],
-          ]
-
-  const formRows =
-    type === 'skill'
-      ? [
-          ['默认技能集', '规划技能 + 前端构建技能 + 安全审计技能'],
-          ['触发方式', '手动触发 + 任务路由自动触发'],
-          ['最近变更', '前端构建技能 v1.3 已发布到测试环境'],
-        ]
-      : type === 'mcp'
-        ? [
-          ['默认连接策略', '优先本地工具，失败后回退远程服务'],
-          ['高权限审批', 'GitHub 写操作、浏览器下载、文件删除需要审批'],
-          ['最近巡检', 'Playwright 延迟偏高，已自动切换到降载模式'],
-        ]
-        : type === 'models'
-          ? [
-            ['平台默认模型', 'GPT-5.4'],
-            ['回退模型', 'GPT-5.4-mini'],
-            ['默认推理档位', 'medium'],
-          ]
-          : [
-            ['默认语言', '中文'],
-            ['默认工作区', 'go-agent-platform'],
-            ['默认权限策略', '读写工作区，敏感命令审批'],
-          ]
-
-  return (
-    <div className="capability-panel">
-      <div className="capability-hero">
-        <div className="hero-mark">{renderIcon(type === 'skill' ? 'skill' : type === 'mcp' ? 'mcp' : type === 'models' ? 'model' : 'settings')}</div>
-        <h1>{title}</h1>
-        <p>{subtitle}</p>
-      </div>
-
-      <div className="feature-summary-grid">
-        {summaryCards.map(([label, value, hint]) => (
-          <div key={label} className="feature-stat-card">
-            <span>{label}</span>
-            <strong>{value}</strong>
-            <small>{hint}</small>
-          </div>
-        ))}
-      </div>
-
-      <div className="feature-detail-grid">
-        {detailCards.map(([titleText, desc]) => (
-          <div key={titleText} className="capability-card">
-            <strong>{titleText}</strong>
-            <span>{desc}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="feature-config-panel">
-        <div className="feature-config-head">
-          <div>
-            <h3>当前配置</h3>
-            <p>保留现有视觉风格，只增强信息密度和可操作性。</p>
-          </div>
-          <button type="button">保存配置</button>
-        </div>
-
-        <div className="feature-config-grid">
-          {formRows.map(([label, value]) => (
-            <label key={label} className="feature-field">
-              <span>{label}</span>
-              <input defaultValue={value} type="text" />
+    <div className="page-shell">
+      <PageHero icon="create-agent" title="新建 Agent" subtitle="在创建时绑定模型、Skill 与 MCP，后续由 Agent 按配置调用能力。" />
+      <div className="editor-panel">
+        <Section title="基础信息" hint={loading ? '正在读取资源...' : '只展示后端已支持的真实字段。'}>
+          <div className="form-grid form-grid-two">
+            <label className="field">
+              <span>Agent 名称</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：行业情报 Agent" type="text" />
             </label>
-          ))}
+            <label className="field">
+              <span>模型</span>
+              <select value={model} onChange={(e) => setModel(e.target.value)}>
+                <option value="">请选择模型</option>
+                {models.map((item) => (
+                  <option key={item.id} value={item.model_key}>
+                    {item.name} / {item.model_key}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="form-grid form-grid-two">
+            <label className="field">
+              <span>Agent 描述</span>
+              <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="说明这个 Agent 的职责和边界。" rows={4} />
+            </label>
+            <label className="field">
+              <span>System Prompt</span>
+              <textarea value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder="可选，对应后端 system_prompt 字段。" rows={4} />
+            </label>
+          </div>
+        </Section>
+
+        <Section title="能力装配" hint="这里只显示“我的 Skill”和“我的 MCP”，平台资源请先安装到个人列表。">
+          <div className="form-grid form-grid-two">
+            <SelectionPanel
+              emptyText="当前没有可用 Skill，可先到“技能与应用”页面安装平台 Skill 或创建个人 Skill。"
+              items={skillCatalog.my_items}
+              selected={selectedSkills}
+              title="我的 Skill"
+              onToggle={(id) => toggleSelection(id, selectedSkills, setSelectedSkills)}
+              renderMeta={(item) => item.description || item.entry || '暂无描述'}
+            />
+            <SelectionPanel
+              emptyText="当前没有可用 MCP，可先到“MCP 配置”页面安装平台 MCP 或创建个人 MCP。"
+              items={toolCatalog.my_items}
+              selected={selectedTools}
+              title="我的 MCP"
+              onToggle={(id) => toggleSelection(id, selectedTools, setSelectedTools)}
+              renderMeta={(item) => item.description || '暂无描述'}
+            />
+          </div>
+        </Section>
+
+        {error ? <div className="notice error">{error}</div> : null}
+        {message ? <div className={`notice ${message.includes('已创建') ? 'success' : 'error'}`}>{message}</div> : null}
+        <div className="panel-actions">
+          <button className="primary-button" disabled={saving} onClick={submit} type="button">
+            {saving ? '创建中...' : '创建 Agent'}
+          </button>
         </div>
       </div>
     </div>
   )
 }
 
-function renderIcon(kind: string) {
-  if (kind === 'cube') {
+function SkillsPage(props: DashboardProps) {
+  const { error, onCreateSkill, onRefresh, skillCatalog, token } = props
+  const [name, setName] = useState('')
+  const [slug, setSlug] = useState('')
+  const [description, setDescription] = useState('')
+  const [version, setVersion] = useState('0.1.0')
+  const [entry, setEntry] = useState('')
+  const [scope, setScope] = useState<'platform' | 'personal'>('personal')
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+  const myIDs = useMemo(() => new Set(skillCatalog.my_items.map((item) => item.id)), [skillCatalog.my_items])
+
+  async function submit() {
+    if (!name.trim()) return setMessage('请先填写 Skill 名称。')
+    setSaving(true)
+    setMessage('')
+    try {
+      await onCreateSkill({ name: name.trim(), slug: slug.trim(), scope, description: description.trim(), version: version.trim() || '0.1.0', entry: entry.trim(), schema: {}, config: {} })
+      setName('')
+      setSlug('')
+      setDescription('')
+      setVersion('0.1.0')
+      setEntry('')
+      setScope('personal')
+      setMessage('Skill 已创建。')
+    } catch (currentError) {
+      setMessage(currentError instanceof Error ? currentError.message : '创建 Skill 失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleInstall(item: SkillItem, installed: boolean) {
+    setMessage('')
+    try {
+      if (installed) await uninstallSkill(token, item.id)
+      else await installSkill(token, item.id)
+      await onRefresh()
+    } catch (currentError) {
+      setMessage(currentError instanceof Error ? currentError.message : '更新 Skill 失败')
+    }
+  }
+
+  return (
+    <div className="page-shell">
+      <PageHero icon="skills" title="技能与应用" subtitle="平台统一提供可复用 Skill，用户也可维护自己的 Skill，并装配到 Agent。" />
+      <div className="editor-panel">
+        <CatalogSection
+          title="平台 Skill"
+          items={skillCatalog.platform_items}
+          emptyTitle="当前还没有平台 Skill"
+          emptyText="平台 Skill 创建后会出现在这里，用户可以安装到“我的 Skill”。"
+          renderItem={(item) => (
+            <CatalogItem
+              title={item.name}
+              secondary={`${item.version || '未标记版本'}${item.entry ? ` · ${item.entry}` : ''}`}
+              actionLabel={myIDs.has(item.id) ? '移除' : '安装'}
+              onAction={() => handleInstall(item, myIDs.has(item.id))}
+            >
+              {item.description || '暂无描述'}
+            </CatalogItem>
+          )}
+        />
+        <CatalogSection
+          title="我的 Skill"
+          items={skillCatalog.my_items}
+          emptyTitle="当前还没有我的 Skill"
+          emptyText="“我的 Skill”包含你自己创建的 Skill，以及你从平台安装下来的 Skill。"
+          renderItem={(item) => (
+            <CatalogItem title={item.name} secondary={item.scope === 'platform' ? '已安装的平台 Skill' : `私有 Skill${item.entry ? ` · ${item.entry}` : ''}`}>
+              {item.description || '暂无描述'}
+            </CatalogItem>
+          )}
+        />
+        <ResourceForm
+          error={error}
+          fields={
+            <>
+              <div className="form-grid form-grid-three">
+                <label className="field">
+                  <span>Skill 名称</span>
+                  <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：行业研究" type="text" />
+                </label>
+                <label className="field">
+                  <span>Slug</span>
+                  <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="例如：industry-research" type="text" />
+                </label>
+                <label className="field">
+                  <span>发布范围</span>
+                  <select value={scope} onChange={(e) => setScope(e.target.value as 'platform' | 'personal')}>
+                    <option value="personal">我的 Skill</option>
+                    <option value="platform">平台 Skill</option>
+                  </select>
+                </label>
+              </div>
+              <div className="form-grid form-grid-three">
+                <label className="field">
+                  <span>版本</span>
+                  <input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="例如：0.1.0" type="text" />
+                </label>
+                <label className="field form-grid-span-2">
+                  <span>入口标识</span>
+                  <input value={entry} onChange={(e) => setEntry(e.target.value)} placeholder="例如：builtin/research" type="text" />
+                </label>
+              </div>
+              <label className="field">
+                <span>描述</span>
+                <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="描述这个 Skill 的能力边界。" rows={4} />
+              </label>
+            </>
+          }
+          hint="仅提交后端已支持字段。若创建平台 Skill，当前账号需要具备平台管理权限。"
+          message={message}
+          saving={saving}
+          title="创建 Skill"
+          onSubmit={submit}
+          submitText="创建 Skill"
+        />
+      </div>
+    </div>
+  )
+}
+
+function McpPage(props: DashboardProps) {
+  const { error, onCreateTool, onRefresh, token, toolCatalog } = props
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [scope, setScope] = useState<'platform' | 'personal'>('personal')
+  const [requiresApproval, setRequiresApproval] = useState(false)
+  const [schemaText, setSchemaText] = useState('{}')
+  const [configText, setConfigText] = useState('{}')
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+  const myIDs = useMemo(() => new Set(toolCatalog.my_items.map((item) => item.id)), [toolCatalog.my_items])
+
+  async function submit() {
+    if (!name.trim()) return setMessage('请先填写 MCP 名称。')
+    setSaving(true)
+    setMessage('')
+    try {
+      await onCreateTool({ name: name.trim(), scope, description: description.trim(), schema: JSON.parse(schemaText), config: JSON.parse(configText), requires_approval: requiresApproval })
+      setName('')
+      setDescription('')
+      setScope('personal')
+      setRequiresApproval(false)
+      setSchemaText('{}')
+      setConfigText('{}')
+      setMessage('MCP 已创建。')
+    } catch (currentError) {
+      setMessage(currentError instanceof Error ? currentError.message : '创建 MCP 失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleInstall(item: ToolItem, installed: boolean) {
+    setMessage('')
+    try {
+      if (installed) await uninstallTool(token, item.id)
+      else await installTool(token, item.id)
+      await onRefresh()
+    } catch (currentError) {
+      setMessage(currentError instanceof Error ? currentError.message : '更新 MCP 失败')
+    }
+  }
+
+  return (
+    <div className="page-shell">
+      <PageHero icon="mcp" title="MCP 配置" subtitle="平台统一提供 MCP，用户可选择安装，也可维护自己的私有 MCP。" />
+      <div className="editor-panel">
+        <CatalogSection
+          title="平台 MCP"
+          items={toolCatalog.platform_items}
+          emptyTitle="当前还没有平台 MCP"
+          emptyText="平台 MCP 创建后会出现在这里，用户可以安装到“我的 MCP”。"
+          renderItem={(item) => (
+            <CatalogItem
+              title={item.name}
+              secondary={item.requires_approval ? '需要审批' : '直接调用'}
+              actionLabel={myIDs.has(item.id) ? '移除' : '安装'}
+              onAction={() => handleInstall(item, myIDs.has(item.id))}
+            >
+              {item.description || '暂无描述'}
+            </CatalogItem>
+          )}
+        />
+        <CatalogSection
+          title="我的 MCP"
+          items={toolCatalog.my_items}
+          emptyTitle="当前还没有我的 MCP"
+          emptyText="“我的 MCP”包含你自己创建的 MCP，以及你从平台安装下来的 MCP。"
+          renderItem={(item) => (
+            <CatalogItem title={item.name} secondary={item.scope === 'platform' ? '已安装的平台 MCP' : item.requires_approval ? '私有 MCP · 需要审批' : '私有 MCP'}>
+              {item.description || '暂无描述'}
+            </CatalogItem>
+          )}
+        />
+        <ResourceForm
+          error={error}
+          fields={
+            <>
+              <div className="form-grid form-grid-three">
+                <label className="field">
+                  <span>MCP 名称</span>
+                  <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：browser-search" type="text" />
+                </label>
+                <label className="field">
+                  <span>发布范围</span>
+                  <select value={scope} onChange={(e) => setScope(e.target.value as 'platform' | 'personal')}>
+                    <option value="personal">我的 MCP</option>
+                    <option value="platform">平台 MCP</option>
+                  </select>
+                </label>
+                <label className="toggle-field">
+                  <span>调用审批</span>
+                  <div className="toggle-inline">
+                    <input checked={requiresApproval} onChange={(e) => setRequiresApproval(e.target.checked)} type="checkbox" />
+                    <strong>{requiresApproval ? '需要审批' : '直接调用'}</strong>
+                  </div>
+                </label>
+              </div>
+              <label className="field">
+                <span>描述</span>
+                <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="描述这个 MCP 暴露的能力和边界。" rows={3} />
+              </label>
+              <div className="form-grid form-grid-two">
+                <label className="field">
+                  <span>Schema JSON</span>
+                  <textarea value={schemaText} onChange={(e) => setSchemaText(e.target.value)} rows={8} />
+                </label>
+                <label className="field">
+                  <span>Config JSON</span>
+                  <textarea value={configText} onChange={(e) => setConfigText(e.target.value)} rows={8} />
+                </label>
+              </div>
+            </>
+          }
+          hint="只暴露后端已有的 name、description、scope、schema、config、requires_approval 字段。"
+          message={message}
+          saving={saving}
+          title="创建 MCP"
+          onSubmit={submit}
+          submitText="创建 MCP"
+        />
+      </div>
+    </div>
+  )
+}
+
+function ModelsPage(props: DashboardProps) {
+  const { error, models, onCreateModel } = props
+  const [name, setName] = useState('')
+  const [provider, setProvider] = useState('')
+  const [modelKey, setModelKey] = useState('')
+  const [description, setDescription] = useState('')
+  const [contextWindow, setContextWindow] = useState('')
+  const [maxOutputTokens, setMaxOutputTokens] = useState('')
+  const [capabilities, setCapabilities] = useState('')
+  const [isDefault, setIsDefault] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+
+  async function submit() {
+    if (!name.trim() || !modelKey.trim()) return setMessage('请先填写模型名称和 Model Key。')
+    setSaving(true)
+    setMessage('')
+    try {
+      await onCreateModel({
+        name: name.trim(),
+        provider: provider.trim(),
+        model_key: modelKey.trim(),
+        description: description.trim(),
+        context_window: Number(contextWindow) || 0,
+        max_output_tokens: Number(maxOutputTokens) || 0,
+        capabilities: capabilities.split(',').map((item) => item.trim()).filter(Boolean),
+        is_default: isDefault,
+      })
+      setName('')
+      setProvider('')
+      setModelKey('')
+      setDescription('')
+      setContextWindow('')
+      setMaxOutputTokens('')
+      setCapabilities('')
+      setIsDefault(false)
+      setMessage('模型已创建。')
+    } catch (currentError) {
+      setMessage(currentError instanceof Error ? currentError.message : '创建模型失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="page-shell">
+      <PageHero icon="models" title="模型配置" subtitle="这里展示平台当前已配置的模型，并支持继续补充新的模型定义。" />
+      <div className="editor-panel">
+        <CatalogSection
+          title="已配置模型"
+          items={models}
+          emptyTitle="当前还没有模型"
+          emptyText="请先创建至少一个模型，然后在新建 Agent 或对话页中选择。"
+          renderItem={(item) => (
+            <CatalogItem title={item.name} secondary={`${item.provider || '未填写 Provider'} · ${item.model_key}${item.is_default ? ' · 默认模型' : ''}`}>
+              {item.description || '暂无描述'}
+            </CatalogItem>
+          )}
+        />
+        <ResourceForm
+          error={error}
+          fields={
+            <>
+              <div className="form-grid form-grid-three">
+                <label className="field">
+                  <span>模型名称</span>
+                  <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：GPT-4.1" type="text" />
+                </label>
+                <label className="field">
+                  <span>Provider</span>
+                  <input value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="例如：openai" type="text" />
+                </label>
+                <label className="field">
+                  <span>Model Key</span>
+                  <input value={modelKey} onChange={(e) => setModelKey(e.target.value)} placeholder="例如：gpt-4.1" type="text" />
+                </label>
+              </div>
+              <label className="field">
+                <span>描述</span>
+                <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="描述这个模型适合的任务。" rows={3} />
+              </label>
+              <div className="form-grid form-grid-three">
+                <label className="field">
+                  <span>上下文窗口</span>
+                  <input value={contextWindow} onChange={(e) => setContextWindow(e.target.value)} placeholder="例如：128000" type="number" />
+                </label>
+                <label className="field">
+                  <span>最大输出 Token</span>
+                  <input value={maxOutputTokens} onChange={(e) => setMaxOutputTokens(e.target.value)} placeholder="例如：4096" type="number" />
+                </label>
+                <label className="toggle-field">
+                  <span>默认模型</span>
+                  <div className="toggle-inline">
+                    <input checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} type="checkbox" />
+                    <strong>{isDefault ? '设为默认' : '普通模型'}</strong>
+                  </div>
+                </label>
+              </div>
+              <label className="field">
+                <span>Capabilities</span>
+                <input value={capabilities} onChange={(e) => setCapabilities(e.target.value)} placeholder="例如：chat,reasoning,vision" type="text" />
+              </label>
+            </>
+          }
+          hint="只填写后端已支持的模型字段，不扩展额外的路由或计费概念。"
+          message={message}
+          saving={saving}
+          title="创建模型"
+          onSubmit={submit}
+          submitText="创建模型"
+        />
+      </div>
+    </div>
+  )
+}
+
+function SettingsPage({ user }: { user: UserInfo | null }) {
+  return (
+    <div className="page-shell">
+      <PageHero icon="settings" title="系统设置" subtitle="这里只保留当前平台已存在的真实信息，不引入额外概念。" />
+      <div className="editor-panel">
+        <Section title="当前账号" hint="登录信息来自 /api/v1/me。">
+          <div className="form-grid form-grid-three">
+            <div className="field readonly">
+              <span>姓名</span>
+              <input readOnly type="text" value={user?.name ?? '未登录'} />
+            </div>
+            <div className="field readonly">
+              <span>邮箱</span>
+              <input readOnly type="text" value={user?.email ?? '未登录'} />
+            </div>
+            <div className="field readonly">
+              <span>用户 ID</span>
+              <input readOnly type="text" value={user?.id ?? '未登录'} />
+            </div>
+          </div>
+        </Section>
+      </div>
+    </div>
+  )
+}
+
+function AgentChatPage(props: DashboardProps) {
+  const { activeAgent, error, models, token } = props
+  const [sessions, setSessions] = useState<SessionItem[]>([])
+  const [activeSessionId, setActiveSessionId] = useState('')
+  const [messages, setMessages] = useState<MessageItem[]>([])
+  const [model, setModel] = useState('')
+  const [reasoning, setReasoning] = useState('standard')
+  const [prompt, setPrompt] = useState('')
+  const [sending, setSending] = useState(false)
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    setModel(activeAgent?.model ?? models.find((item) => item.is_default)?.model_key ?? models[0]?.model_key ?? '')
+  }, [activeAgent?.id, activeAgent?.model, models])
+
+  useEffect(() => {
+    if (!activeAgent) {
+      setSessions([])
+      setActiveSessionId('')
+      setMessages([])
+      return
+    }
+    let cancelled = false
+    async function loadSessions() {
+      try {
+        const items = await fetchSessions(token, activeAgent.id)
+        if (cancelled) return
+        setSessions(items)
+        setActiveSessionId((current) => (current && items.some((item) => item.id === current) ? current : items[0]?.id ?? ''))
+      } catch (currentError) {
+        if (!cancelled) setMessage(currentError instanceof Error ? currentError.message : '读取会话失败')
+      }
+    }
+    loadSessions()
+    return () => {
+      cancelled = true
+    }
+  }, [activeAgent, token])
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      setMessages([])
+      return
+    }
+    let cancelled = false
+    async function loadMessages() {
+      try {
+        const items = await fetchMessages(token, activeSessionId)
+        if (!cancelled) setMessages(items)
+      } catch (currentError) {
+        if (!cancelled) setMessage(currentError instanceof Error ? currentError.message : '读取消息失败')
+      }
+    }
+    loadMessages()
+    return () => {
+      cancelled = true
+    }
+  }, [activeSessionId, token])
+
+  async function submit() {
+    if (!activeAgent) return setMessage('请先选择一个 Agent。')
+    if (!prompt.trim()) return setMessage('请输入内容。')
+    setSending(true)
+    setMessage('')
+    const currentPrompt = prompt.trim()
+    try {
+      const task = await executeTask(token, {
+        agent_id: activeAgent.id,
+        session_id: activeSessionId || undefined,
+        session_title: currentPrompt.slice(0, 32),
+        model: model || undefined,
+        reasoning,
+        prompt: currentPrompt,
+        async: false,
+      })
+      const nextSessions = await fetchSessions(token, activeAgent.id)
+      setSessions(nextSessions)
+      setActiveSessionId(task.session_id)
+      if (task.session_id) {
+        setMessages(await fetchMessages(token, task.session_id))
+      }
+      setPrompt('')
+    } catch (currentError) {
+      setMessage(currentError instanceof Error ? currentError.message : '发送消息失败')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  if (!activeAgent) {
     return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 3 5 7v10l7 4 7-4V7l-7-4Z" />
-        <path d="m5 7 7 4 7-4" />
-        <path d="M12 11v10" />
-      </svg>
+      <div className="page-shell">
+        <PageHero icon="chat" title="选择一个 Agent" subtitle="左侧选择 Agent 后，这里会进入它的聊天页面。" />
+      </div>
     )
   }
 
-  if (kind === 'scope') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="12" cy="12" r="6.5" />
-        <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />
-      </svg>
-    )
-  }
+  const emptyState = sessions.length === 0 && messages.length === 0
 
-  if (kind === 'terminal') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="4" y="5" width="16" height="14" rx="3" />
-        <path d="m8 10 2 2-2 2M12.5 14H16" />
-      </svg>
-    )
-  }
+  return (
+    <div className="page-shell chat-page-shell">
+      <div className="chat-shell chat-shell-full">
+        {emptyState ? (
+          <div className="chat-empty-state">
+            <PageHero icon="person" title={activeAgent.name} subtitle={activeAgent.description || '还没有聊天记录，可以直接开始对话。'} />
+          </div>
+        ) : (
+          <div className="chat-header">
+            <div>
+              <h1>{activeAgent.name}</h1>
+              <p>{activeAgent.description || '当前 Agent 已加载，可继续对话。'}</p>
+            </div>
+            {sessions.length > 0 ? (
+              <div className="session-strip">
+                {sessions.map((item) => (
+                  <button key={item.id} className={`session-chip ${activeSessionId === item.id ? 'active' : ''}`} onClick={() => setActiveSessionId(item.id)} type="button">
+                    {item.title || '新对话'}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
 
-  if (kind === 'clipboard') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="7" y="5" width="10" height="14" rx="2.5" />
-        <path d="M9 5.5h6V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v1.5Z" />
-      </svg>
-    )
-  }
+        {messages.length > 0 ? (
+          <div className="message-list message-list-full">
+            {messages.map((item) => (
+              <div key={item.id} className={`message-bubble ${item.role === 'user' ? 'user' : 'assistant'}`}>
+                <div className="message-role">{item.role === 'user' ? '你' : activeAgent.name}</div>
+                <div className="message-content">{item.content}</div>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
-  if (kind === 'spark') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M9.4 4.2c.9-1.6 3.3-1.6 4.2 0l.6 1.1a2.8 2.8 0 0 0 1.7 1.3l1.2.3c1.8.5 2.5 2.7 1.4 4.1l-.8 1a2.8 2.8 0 0 0-.5 2.1l.2 1.2c.3 1.8-1.5 3.1-3.2 2.4l-1.1-.5a2.8 2.8 0 0 0-2.2 0l-1.1.5c-1.7.7-3.5-.6-3.2-2.4l.2-1.2a2.8 2.8 0 0 0-.5-2.1l-.8-1c-1.1-1.4-.4-3.6 1.4-4.1l1.2-.3a2.8 2.8 0 0 0 1.7-1.3l.6-1.1Z" />
-        <path d="m10 9 2 3-2 3M14 15h1.6" />
-      </svg>
-    )
-  }
+        <div className="composer-shell composer-shell-docked">
+          <textarea className="composer-input" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={`向 ${activeAgent.name} 发送消息，Agent 会按已绑定的 Skill 与 MCP 进行调用。`} rows={4} />
+          <div className="composer-toolbar">
+            <div className="composer-group">
+              <label className="toolbar-select">
+                <span>模型</span>
+                <select value={model} onChange={(e) => setModel(e.target.value)}>
+                  <option value="">默认模型</option>
+                  {models.map((item) => (
+                    <option key={item.id} value={item.model_key}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="toolbar-select">
+                <span>思考深度</span>
+                <select value={reasoning} onChange={(e) => setReasoning(e.target.value)}>
+                  <option value="standard">标准</option>
+                  <option value="deep">深度思考</option>
+                </select>
+              </label>
+            </div>
+            <button className="send-button" disabled={sending} onClick={submit} type="button">
+              {sending ? '发送中...' : '发送'}
+            </button>
+          </div>
+        </div>
 
-  if (kind === 'mcp') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="4" y="6" width="6" height="12" rx="2" />
-        <rect x="14" y="6" width="6" height="12" rx="2" />
-        <path d="M10 12h4" />
-      </svg>
-    )
-  }
+        {error ? <div className="notice error">{error}</div> : null}
+        {message ? <div className="notice error">{message}</div> : null}
+      </div>
+    </div>
+  )
+}
 
-  if (kind === 'model') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="5" y="6" width="14" height="12" rx="3" />
-        <path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 10h2M3 14h2M19 10h2M19 14h2" />
-        <path d="M9.5 10.5h5M9.5 13.5h5" />
-      </svg>
-    )
-  }
+function PageHero(props: { icon: AppIconKey; title: string; subtitle: string }) {
+  return (
+    <div className="page-hero">
+      <div className="hero-mark">
+        <AppIcon kind={props.icon} />
+      </div>
+      <h1>{props.title}</h1>
+      <p>{props.subtitle}</p>
+    </div>
+  )
+}
 
-  if (kind === 'skill') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M13 3 5 14h5l-1 7 8-11h-5l1-7Z" />
-      </svg>
-    )
-  }
+function Section(props: { title: string; hint: string; children: ReactNode }) {
+  return (
+    <div className="panel-section">
+      <div className="panel-section-head">
+        <h3>{props.title}</h3>
+        <span>{props.hint}</span>
+      </div>
+      {props.children}
+    </div>
+  )
+}
 
-  if (kind === 'deploy') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 4v10" />
-        <path d="m8 8 4-4 4 4" />
-        <rect x="4" y="14" width="16" height="6" rx="2.5" />
-      </svg>
-    )
-  }
+function ResourceForm(props: { title: string; hint: string; fields: ReactNode; message: string; error: string; saving: boolean; submitText: string; onSubmit: () => void }) {
+  return (
+    <Section title={props.title} hint={props.hint}>
+      {props.fields}
+      {props.error ? <div className="notice error">{props.error}</div> : null}
+      {props.message ? <div className={`notice ${props.message.includes('已创建') ? 'success' : 'error'}`}>{props.message}</div> : null}
+      <div className="panel-actions">
+        <button className="primary-button" disabled={props.saving} onClick={props.onSubmit} type="button">
+          {props.saving ? '提交中...' : props.submitText}
+        </button>
+      </div>
+    </Section>
+  )
+}
 
-  if (kind === 'code') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="m9 8-4 4 4 4M15 8l4 4-4 4M13 5l-2 14" />
-      </svg>
-    )
-  }
+function CatalogSection<T>(props: { title: string; items: T[]; emptyTitle: string; emptyText: string; renderItem: (item: T) => ReactNode }) {
+  return (
+    <Section title={props.title} hint="保持简洁，只展示真实资源。">
+      <div className="list-panel">
+        {props.items.length > 0 ? props.items.map((item, index) => <div key={index}>{props.renderItem(item)}</div>) : <div className="empty-panel"><strong>{props.emptyTitle}</strong><p>{props.emptyText}</p></div>}
+      </div>
+    </Section>
+  )
+}
 
-  if (kind === 'bolt') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M13 2 6 13h5l-1 9 8-12h-5l0-8Z" />
-      </svg>
-    )
-  }
+function CatalogItem(props: { title: string; secondary: string; children: ReactNode; actionLabel?: string; onAction?: () => void }) {
+  return (
+    <div className="list-item">
+      <div>
+        <strong>{props.title}</strong>
+        <p>{props.children}</p>
+        <div className="list-secondary">{props.secondary}</div>
+      </div>
+      {props.actionLabel && props.onAction ? <button className="secondary-button" onClick={props.onAction} type="button">{props.actionLabel}</button> : null}
+    </div>
+  )
+}
 
-  if (kind === 'mic') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="9" y="4" width="6" height="10" rx="3" />
-        <path d="M7 11a5 5 0 1 0 10 0M12 16v4M9 20h6" />
-      </svg>
-    )
-  }
+function SelectionPanel<T extends { id: string; name: string }>(props: {
+  title: string
+  items: T[]
+  selected: string[]
+  emptyText: string
+  onToggle: (id: string) => void
+  renderMeta: (item: T) => string
+}) {
+  return (
+    <div className="field">
+      <span>{props.title}</span>
+      <div className="check-list">
+        {props.items.length > 0 ? (
+          props.items.map((item) => (
+            <label key={item.id} className="check-item">
+              <input checked={props.selected.includes(item.id)} onChange={() => props.onToggle(item.id)} type="checkbox" />
+              <div>
+                <strong>{item.name}</strong>
+                <small>{props.renderMeta(item)}</small>
+              </div>
+            </label>
+          ))
+        ) : (
+          <div className="inline-empty">{props.emptyText}</div>
+        )}
+      </div>
+    </div>
+  )
+}
 
-  if (kind === 'screen') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="4" y="5" width="16" height="11" rx="2.5" />
-        <path d="M9 19h6" />
-      </svg>
-    )
-  }
-
-  if (kind === 'shield') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 3 5 6v5c0 5 3.2 8.4 7 10 3.8-1.6 7-5 7-10V6l-7-3Z" />
-      </svg>
-    )
-  }
-
-  if (kind === 'branch') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="7" cy="6" r="2.5" />
-        <circle cx="17" cy="18" r="2.5" />
-        <path d="M7 8.5v6a3.5 3.5 0 0 0 3.5 3.5H14" />
-        <path d="M14 6h3" />
-      </svg>
-    )
-  }
-
-  if (kind === 'settings') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M10.5 3h3l.7 2.2 2.2.9 2.1-1 2.1 2.1-1 2.1.9 2.2 2.2.7v3l-2.2.7-.9 2.2 1 2.1-2.1 2.1-2.1-1-2.2.9-.7 2.2h-3l-.7-2.2-2.2-.9-2.1 1-2.1-2.1 1-2.1-.9-2.2L3 13.5v-3l2.2-.7.9-2.2-1-2.1 2.1-2.1 2.1 1 2.2-.9.7-2.2Z" />
-        <circle cx="12" cy="12" r="3.2" />
-      </svg>
-    )
-  }
-
-  return <span />
+function toggleSelection(value: string, items: string[], setter: (items: string[]) => void) {
+  setter(items.includes(value) ? items.filter((item) => item !== value) : [...items, value])
 }

@@ -1,34 +1,45 @@
 import { useState } from 'react'
 
 type AuthPageProps = {
-  onLogin: () => void
+  onLogin: (email: string, password: string) => Promise<void>
 }
 
 export function AuthPage({ onLogin }: AuthPageProps) {
-  const [isRegister, setIsRegister] = useState(false)
+  const [email, setEmail] = useState('admin@example.com')
+  const [password, setPassword] = useState('ChangeMe123!')
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
 
   return (
     <div className="auth-screen">
       <div className="auth-card">
         <div className="auth-logo">A</div>
-        <h1>{isRegister ? '创建新账号' : '欢迎回来'}</h1>
-        <p>Agent Management Platform</p>
+        <h1>登录平台</h1>
+        <p>统一管理平台资源，按需装配 Agent 能力。</p>
 
         <form
           className="auth-form"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault()
-            onLogin()
+            setPending(true)
+            setError('')
+            try {
+              await onLogin(email, password)
+            } catch (currentError) {
+              setError(currentError instanceof Error ? currentError.message : '登录失败')
+            } finally {
+              setPending(false)
+            }
           }}
         >
-          <input placeholder="邮箱地址" type="email" />
-          <input placeholder="登录密码" type="password" />
-          <button type="submit">{isRegister ? '注册' : '登录'}</button>
+          <input onChange={(event) => setEmail(event.target.value)} placeholder="邮箱地址" type="email" value={email} />
+          <input onChange={(event) => setPassword(event.target.value)} placeholder="登录密码" type="password" value={password} />
+          <button disabled={pending} type="submit">
+            {pending ? '登录中...' : '登录'}
+          </button>
         </form>
 
-        <button className="auth-switch" onClick={() => setIsRegister((value) => !value)} type="button">
-          {isRegister ? '已有账号？去登录' : '没有账号？立即注册'}
-        </button>
+        {error ? <p className="auth-error">{error}</p> : null}
       </div>
     </div>
   )

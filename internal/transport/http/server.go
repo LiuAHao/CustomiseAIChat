@@ -53,6 +53,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/agents", s.withAuth(s.handleAgents))
 	mux.HandleFunc("/api/v1/agents/", s.withAuth(s.handleAgentActions))
 	mux.HandleFunc("/api/v1/tools", s.withAuth(s.handleTools))
+	mux.HandleFunc("/api/v1/tools/", s.withAuth(s.handleToolActions))
+	mux.HandleFunc("/api/v1/skills", s.withAuth(s.handleSkills))
+	mux.HandleFunc("/api/v1/skills/", s.withAuth(s.handleSkillActions))
+	mux.HandleFunc("/api/v1/models", s.withAuth(s.handleModels))
+	mux.HandleFunc("/api/v1/models/", s.withAuth(s.handleModelActions))
 	mux.HandleFunc("/api/v1/sessions", s.withAuth(s.handleSessions))
 	mux.HandleFunc("/api/v1/sessions/", s.withAuth(s.handleSessionActions))
 	mux.HandleFunc("/api/v1/tasks", s.withAuth(s.handleTasks))
@@ -76,6 +81,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		writeJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -98,8 +107,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMe(w http.ResponseWriter, _ *http.Request, user auth.User) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":       user,
-		"workspaces": s.app.ListWorkspaces(user.ID),
+		"user": user,
 	})
 }
 
@@ -122,7 +130,11 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request, user a
 func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request, user auth.User) {
 	switch r.Method {
 	case http.MethodGet:
-		workspaceID := r.URL.Query().Get("workspace_id")
+		workspaceID, err := s.app.ResolveWorkspaceID(user.ID, r.URL.Query().Get("workspace_id"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListAgents(workspaceID)})
 	case http.MethodPost:
 		var req app.CreateAgentRequest
@@ -178,7 +190,7 @@ func (s *Server) handleAgentActions(w http.ResponseWriter, r *http.Request, user
 func (s *Server) handleTools(w http.ResponseWriter, r *http.Request, user auth.User) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListTools(r.URL.Query().Get("workspace_id"))})
+		writeJSON(w, http.StatusOK, s.app.ListToolCatalog(user.ID))
 	case http.MethodPost:
 		var req app.CreateToolRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -196,22 +208,209 @@ func (s *Server) handleTools(w http.ResponseWriter, r *http.Request, user auth.U
 	}
 }
 
-func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request, user auth.User) {
-	if r.Method != http.MethodPost {
+func (s *Server) handleToolActions(w http.ResponseWriter, r *http.Request, user auth.User) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/tools/"), "/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 2 && parts[1] == "install" {
+		switch r.Method {
+		case http.MethodPost:
+			if err := s.app.InstallTool(user.ID, parts[0]); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "installed"})
+		case http.MethodDelete:
+			if err := s.app.UninstallTool(user.ID, parts[0]); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "uninstalled"})
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+		return
+	}
+	toolID := parts[0]
+	if toolID == "" {
+		writeError(w, http.StatusNotFound, "route not found")
+		return
+	}
+	switch r.Method {
+	case http.MethodPatch:
+		var req app.UpdateToolRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid payload")
+			return
+		}
+		item, err := s.app.UpdateTool(user.ID, toolID, req)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, item)
+	case http.MethodDelete:
+		if err := s.app.DeleteTool(user.ID, toolID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request, user auth.User) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, s.app.ListSkillCatalog(user.ID))
+	case http.MethodPost:
+		var req app.CreateSkillRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid payload")
+			return
+		}
+		item, err := s.app.CreateSkill(user.ID, req)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, item)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleSkillActions(w http.ResponseWriter, r *http.Request, user auth.User) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/skills/"), "/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 2 && parts[1] == "install" {
+		switch r.Method {
+		case http.MethodPost:
+			if err := s.app.InstallSkill(user.ID, parts[0]); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "installed"})
+		case http.MethodDelete:
+			if err := s.app.UninstallSkill(user.ID, parts[0]); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "uninstalled"})
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
 		return
 	}
-	var req app.CreateSessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid payload")
+	skillID := parts[0]
+	if skillID == "" {
+		writeError(w, http.StatusNotFound, "route not found")
 		return
 	}
-	item, err := s.app.CreateSession(user.ID, req)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	switch r.Method {
+	case http.MethodPatch:
+		var req app.UpdateSkillRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid payload")
+			return
+		}
+		item, err := s.app.UpdateSkill(user.ID, skillID, req)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, item)
+	case http.MethodDelete:
+		if err := s.app.DeleteSkill(user.ID, r.URL.Query().Get("workspace_id"), skillID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleModels(w http.ResponseWriter, r *http.Request, user auth.User) {
+	switch r.Method {
+	case http.MethodGet:
+		workspaceID, err := s.app.ResolveWorkspaceID(user.ID, r.URL.Query().Get("workspace_id"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListModels(workspaceID)})
+	case http.MethodPost:
+		var req app.CreateModelRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid payload")
+			return
+		}
+		item, err := s.app.CreateModel(user.ID, req)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, item)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleModelActions(w http.ResponseWriter, r *http.Request, user auth.User) {
+	modelID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/models/"), "/")
+	if modelID == "" {
+		writeError(w, http.StatusNotFound, "route not found")
 		return
 	}
-	writeJSON(w, http.StatusCreated, item)
+	switch r.Method {
+	case http.MethodPatch:
+		var req app.UpdateModelRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid payload")
+			return
+		}
+		item, err := s.app.UpdateModel(user.ID, modelID, req)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, item)
+	case http.MethodDelete:
+		if err := s.app.DeleteModel(user.ID, r.URL.Query().Get("workspace_id"), modelID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request, user auth.User) {
+	switch r.Method {
+	case http.MethodGet:
+		agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+		if agentID == "" {
+			writeError(w, http.StatusBadRequest, "agent_id is required")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListSessionsByAgent(user.ID, agentID)})
+	case http.MethodPost:
+		var req app.CreateSessionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid payload")
+			return
+		}
+		item, err := s.app.CreateSession(user.ID, req)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, item)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 func (s *Server) handleSessionActions(w http.ResponseWriter, r *http.Request, _ auth.User) {
@@ -219,6 +418,10 @@ func (s *Server) handleSessionActions(w http.ResponseWriter, r *http.Request, _ 
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 2 && parts[1] == "messages" && r.Method == http.MethodGet {
 		writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListMessages(parts[0])})
+		return
+	}
+	if len(parts) == 2 && parts[1] == "tasks" && r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, map[string]any{"items": s.app.ListTasksBySession(parts[0])})
 		return
 	}
 	writeError(w, http.StatusNotFound, "route not found")
@@ -348,13 +551,18 @@ func (s *Server) withAuth(next func(http.ResponseWriter, *http.Request, auth.Use
 }
 
 func writeJSON(w http.ResponseWriter, code int, payload any) {
+	setCORSHeaders(w)
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func writeError(w http.ResponseWriter, code int, message string) {
 	writeJSON(w, code, map[string]any{"error": message, "timestamp": time.Now().UTC()})
+}
+
+func setCORSHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 }

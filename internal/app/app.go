@@ -124,17 +124,39 @@ func (a *Application) CreateWorkspace(userID, name string) workspace.Workspace {
 }
 
 func (a *Application) CreateAgent(userID string, req CreateAgentRequest) (agent.Agent, error) {
-	if ok, err := a.userInWorkspace(userID, req.WorkspaceID); err != nil || !ok {
+	workspaceID, err := a.resolveWorkspaceID(userID, req.WorkspaceID)
+	if err != nil {
+		return agent.Agent{}, err
+	}
+	if ok, err := a.userInWorkspace(userID, workspaceID); err != nil || !ok {
 		return agent.Agent{}, errors.New("workspace access denied")
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Model = strings.TrimSpace(req.Model)
+	if req.Name == "" {
+		return agent.Agent{}, errors.New("agent name is required")
+	}
+	if req.Model == "" {
+		return agent.Agent{}, errors.New("model is required")
+	}
+	if _, err := a.Store.FindModelByKey(workspaceID, req.Model); err != nil {
+		return agent.Agent{}, errors.New("model not found in workspace registry")
+	}
+	if err := a.validateSkillPolicy(userID, req.SkillPolicy); err != nil {
+		return agent.Agent{}, err
+	}
+	if err := a.validateToolPolicy(userID, req.ToolPolicy); err != nil {
+		return agent.Agent{}, err
 	}
 	now := time.Now().UTC()
 	item := agent.Agent{
 		ID:            shared.NewID("agent"),
-		WorkspaceID:   req.WorkspaceID,
+		WorkspaceID:   workspaceID,
 		Name:          req.Name,
 		Description:   req.Description,
 		SystemPrompt:  req.SystemPrompt,
 		Model:         req.Model,
+		SkillPolicy:   req.SkillPolicy,
 		ToolPolicy:    req.ToolPolicy,
 		RuntimePolicy: req.RuntimePolicy,
 		CreatedBy:     userID,
@@ -144,7 +166,7 @@ func (a *Application) CreateAgent(userID string, req CreateAgentRequest) (agent.
 	if err := a.Store.SaveAgent(item); err != nil {
 		return agent.Agent{}, err
 	}
-	a.appendAudit(req.WorkspaceID, userID, "agent.create", "agent", item.ID, map[string]any{"name": item.Name})
+	a.appendAudit(workspaceID, userID, "agent.create", "agent", item.ID, map[string]any{"name": item.Name})
 	return item, nil
 }
 
@@ -170,6 +192,7 @@ func (a *Application) CreateVersion(userID, agentID string) (agent.Version, erro
 		"description":    current.Description,
 		"system_prompt":  current.SystemPrompt,
 		"model":          current.Model,
+		"skill_policy":   current.SkillPolicy,
 		"tool_policy":    current.ToolPolicy,
 		"runtime_policy": current.RuntimePolicy,
 	}
@@ -207,13 +230,22 @@ func (a *Application) PublishVersion(userID, agentID, versionID string) error {
 }
 
 func (a *Application) CreateTool(userID string, req CreateToolRequest) (tool.Tool, error) {
-	if ok, err := a.userInWorkspace(userID, req.WorkspaceID); err != nil || !ok {
+	workspaceID, err := a.resolveWorkspaceID(userID, req.WorkspaceID)
+	if err != nil {
+		return tool.Tool{}, err
+	}
+	if ok, err := a.userInWorkspace(userID, workspaceID); err != nil || !ok {
 		return tool.Tool{}, errors.New("workspace access denied")
+	}
+	scope := normalizeToolScope(req.Scope)
+	if scope == tool.ScopePlatform && !a.isPlatformAdmin(userID) {
+		return tool.Tool{}, errors.New("only platform admin can create platform mcp")
 	}
 	item := tool.Tool{
 		ID:               shared.NewID("tool"),
-		WorkspaceID:      req.WorkspaceID,
+		WorkspaceID:      workspaceID,
 		Name:             req.Name,
+		Scope:            scope,
 		Description:      req.Description,
 		Schema:           req.Schema,
 		Config:           req.Config,
@@ -225,7 +257,7 @@ func (a *Application) CreateTool(userID string, req CreateToolRequest) (tool.Too
 	if err := a.Store.SaveTool(item); err != nil {
 		return tool.Tool{}, err
 	}
-	a.appendAudit(req.WorkspaceID, userID, "tool.create", "tool", item.ID, map[string]any{"name": item.Name})
+	a.appendAudit(workspaceID, userID, "tool.create", "tool", item.ID, map[string]any{"name": item.Name, "scope": item.Scope})
 	return item, nil
 }
 
@@ -238,12 +270,19 @@ func (a *Application) ListTools(workspaceID string) []tool.Tool {
 }
 
 func (a *Application) CreateSession(userID string, req CreateSessionRequest) (session.Session, error) {
-	if ok, err := a.userInWorkspace(userID, req.WorkspaceID); err != nil || !ok {
+	workspaceID, err := a.resolveAgentWorkspace(userID, req.WorkspaceID, req.AgentID)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if ok, err := a.userInWorkspace(userID, workspaceID); err != nil || !ok {
 		return session.Session{}, errors.New("workspace access denied")
+	}
+	if item, err := a.Store.FindAgentByID(req.AgentID); err != nil || item.WorkspaceID != workspaceID {
+		return session.Session{}, errors.New("agent not found")
 	}
 	item := session.Session{
 		ID:          shared.NewID("session"),
-		WorkspaceID: req.WorkspaceID,
+		WorkspaceID: workspaceID,
 		AgentID:     req.AgentID,
 		CreatedBy:   userID,
 		Title:       req.Title,
@@ -253,7 +292,7 @@ func (a *Application) CreateSession(userID string, req CreateSessionRequest) (se
 	if err := a.Store.SaveSession(item); err != nil {
 		return session.Session{}, err
 	}
-	a.appendAudit(req.WorkspaceID, userID, "session.create", "session", item.ID, nil)
+	a.appendAudit(workspaceID, userID, "session.create", "session", item.ID, nil)
 	return item, nil
 }
 
@@ -266,7 +305,11 @@ func (a *Application) ListMessages(sessionID string) []session.Message {
 }
 
 func (a *Application) CreateSchedule(userID string, req CreateScheduleRequest) (task.Schedule, error) {
-	if ok, err := a.userInWorkspace(userID, req.WorkspaceID); err != nil || !ok {
+	workspaceID, err := a.resolveWorkspaceID(userID, req.WorkspaceID)
+	if err != nil {
+		return task.Schedule{}, err
+	}
+	if ok, err := a.userInWorkspace(userID, workspaceID); err != nil || !ok {
 		return task.Schedule{}, errors.New("workspace access denied")
 	}
 	nextRunAt, interval, err := parseSchedule(req.Cron)
@@ -275,7 +318,7 @@ func (a *Application) CreateSchedule(userID string, req CreateScheduleRequest) (
 	}
 	item := task.Schedule{
 		ID:          shared.NewID("schedule"),
-		WorkspaceID: req.WorkspaceID,
+		WorkspaceID: workspaceID,
 		AgentID:     req.AgentID,
 		Name:        req.Name,
 		Prompt:      req.Prompt,
@@ -288,7 +331,7 @@ func (a *Application) CreateSchedule(userID string, req CreateScheduleRequest) (
 	if err := a.Store.SaveSchedule(item); err != nil {
 		return task.Schedule{}, err
 	}
-	a.appendAudit(req.WorkspaceID, userID, "schedule.create", "schedule", item.ID, map[string]any{"cron": req.Cron})
+	a.appendAudit(workspaceID, userID, "schedule.create", "schedule", item.ID, map[string]any{"cron": req.Cron})
 	return item, nil
 }
 
@@ -326,7 +369,11 @@ func (a *Application) RunDueSchedules() {
 }
 
 func (a *Application) ExecuteTask(userID string, req ExecuteTaskRequest) (task.Task, error) {
-	if ok, err := a.userInWorkspace(userID, req.WorkspaceID); err != nil || !ok {
+	workspaceID, err := a.resolveAgentWorkspace(userID, req.WorkspaceID, req.AgentID)
+	if err != nil {
+		return task.Task{}, err
+	}
+	if ok, err := a.userInWorkspace(userID, workspaceID); err != nil || !ok {
 		return task.Task{}, errors.New("workspace access denied")
 	}
 	agentRecord, err := a.Store.FindAgentByID(req.AgentID)
@@ -341,7 +388,7 @@ func (a *Application) ExecuteTask(userID string, req ExecuteTaskRequest) (task.T
 	sessionID := req.SessionID
 	if sessionID == "" {
 		created, err := a.CreateSession(userID, CreateSessionRequest{
-			WorkspaceID: req.WorkspaceID,
+			WorkspaceID: workspaceID,
 			AgentID:     req.AgentID,
 			Title:       firstNonEmpty(req.SessionTitle, req.Prompt),
 		})
@@ -354,9 +401,11 @@ func (a *Application) ExecuteTask(userID string, req ExecuteTaskRequest) (task.T
 	job := task.Task{
 		ID:          shared.NewID("task"),
 		TraceID:     shared.NewID("trace"),
-		WorkspaceID: req.WorkspaceID,
+		WorkspaceID: workspaceID,
 		AgentID:     req.AgentID,
 		SessionID:   sessionID,
+		Model:       firstNonEmpty(strings.TrimSpace(req.Model), agentRecord.Model),
+		Reasoning:   firstNonEmpty(strings.TrimSpace(req.Reasoning), "standard"),
 		Prompt:      req.Prompt,
 		Status:      task.StatusPending,
 		CreatedBy:   userID,
@@ -378,7 +427,7 @@ func (a *Application) ExecuteTask(userID string, req ExecuteTaskRequest) (task.T
 		return task.Task{}, err
 	}
 
-	a.appendAudit(req.WorkspaceID, userID, "task.create", "task", job.ID, map[string]any{"agent_id": req.AgentID})
+	a.appendAudit(workspaceID, userID, "task.create", "task", job.ID, map[string]any{"agent_id": req.AgentID, "model": job.Model, "reasoning": job.Reasoning})
 	if req.Async {
 		go a.runTask(job.ID)
 		return job, nil
@@ -572,6 +621,67 @@ func (a *Application) GetTaskSteps(taskID string) []task.Step {
 	return items
 }
 
+func (a *Application) UpdateTool(userID, toolID string, req UpdateToolRequest) (tool.Tool, error) {
+	item, err := a.Store.FindToolByID(toolID)
+	if err != nil {
+		return tool.Tool{}, errors.New("tool not found")
+	}
+	if ok, err := a.userInWorkspace(userID, item.WorkspaceID); err != nil || !ok {
+		return tool.Tool{}, errors.New("workspace access denied")
+	}
+	if item.Scope == tool.ScopePlatform && !a.isPlatformAdmin(userID) {
+		return tool.Tool{}, errors.New("only platform admin can update platform mcp")
+	}
+	if item.Scope == tool.ScopePersonal && item.CreatedBy != userID {
+		return tool.Tool{}, errors.New("mcp access denied")
+	}
+
+	if value := strings.TrimSpace(req.Name); value != "" {
+		item.Name = value
+	}
+	if value := strings.TrimSpace(req.Description); value != "" {
+		item.Description = value
+	}
+	if req.Schema != nil {
+		item.Schema = req.Schema
+	}
+	if req.Config != nil {
+		item.Config = req.Config
+	}
+	if req.RequiresApproval != nil {
+		item.RequiresApproval = *req.RequiresApproval
+	}
+	if req.Enabled != nil {
+		item.Enabled = *req.Enabled
+	}
+	if err := a.Store.UpdateTool(item); err != nil {
+		return tool.Tool{}, err
+	}
+	a.appendAudit(item.WorkspaceID, userID, "tool.update", "tool", item.ID, map[string]any{"enabled": item.Enabled})
+	return item, nil
+}
+
+func (a *Application) DeleteTool(userID, toolID string) error {
+	item, err := a.Store.FindToolByID(toolID)
+	if err != nil {
+		return errors.New("tool not found")
+	}
+	if ok, err := a.userInWorkspace(userID, item.WorkspaceID); err != nil || !ok {
+		return errors.New("workspace access denied")
+	}
+	if item.Scope == tool.ScopePlatform && !a.isPlatformAdmin(userID) {
+		return errors.New("only platform admin can delete platform mcp")
+	}
+	if item.Scope == tool.ScopePersonal && item.CreatedBy != userID {
+		return errors.New("mcp access denied")
+	}
+	if err := a.Store.DeleteTool(item.WorkspaceID, toolID); err != nil {
+		return err
+	}
+	a.appendAudit(item.WorkspaceID, userID, "tool.delete", "tool", toolID, nil)
+	return nil
+}
+
 func (a *Application) ListApprovals(workspaceID string) []approval.Approval {
 	items, err := a.Store.ListApprovals(workspaceID)
 	if err != nil {
@@ -646,12 +756,53 @@ func firstNonEmpty(items ...string) string {
 	return "Untitled Session"
 }
 
+func (a *Application) validateSkillPolicy(userID string, skillIDs []string) error {
+	for _, skillID := range normalizeStringList(skillIDs) {
+		item, err := a.Store.FindSkillByID(skillID)
+		if err != nil || !item.Enabled || !a.skillAccessible(userID, item) {
+			return fmt.Errorf("skill %s not available", skillID)
+		}
+	}
+	return nil
+}
+
+func (a *Application) validateToolPolicy(userID string, toolIDs []string) error {
+	for _, toolID := range normalizeStringList(toolIDs) {
+		item, err := a.Store.FindToolByID(toolID)
+		if err != nil || !item.Enabled || !a.toolAccessible(userID, item) {
+			return fmt.Errorf("tool %s not available", toolID)
+		}
+	}
+	return nil
+}
+
+func normalizeStringList(items []string) []string {
+	if len(items) == 0 {
+		return []string{}
+	}
+	seen := make(map[string]struct{}, len(items))
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
 type CreateAgentRequest struct {
 	WorkspaceID   string   `json:"workspace_id"`
 	Name          string   `json:"name"`
 	Description   string   `json:"description"`
 	SystemPrompt  string   `json:"system_prompt"`
 	Model         string   `json:"model"`
+	SkillPolicy   []string `json:"skill_policy"`
 	ToolPolicy    []string `json:"tool_policy"`
 	RuntimePolicy string   `json:"runtime_policy"`
 }
@@ -659,10 +810,20 @@ type CreateAgentRequest struct {
 type CreateToolRequest struct {
 	WorkspaceID      string         `json:"workspace_id"`
 	Name             string         `json:"name"`
+	Scope            string         `json:"scope"`
 	Description      string         `json:"description"`
 	Schema           map[string]any `json:"schema"`
 	Config           map[string]any `json:"config"`
 	RequiresApproval bool           `json:"requires_approval"`
+}
+
+type UpdateToolRequest struct {
+	Name             string         `json:"name"`
+	Description      string         `json:"description"`
+	Schema           map[string]any `json:"schema"`
+	Config           map[string]any `json:"config"`
+	RequiresApproval *bool          `json:"requires_approval"`
+	Enabled          *bool          `json:"enabled"`
 }
 
 type CreateSessionRequest struct {
@@ -676,6 +837,8 @@ type ExecuteTaskRequest struct {
 	AgentID      string          `json:"agent_id"`
 	SessionID    string          `json:"session_id"`
 	SessionTitle string          `json:"session_title"`
+	Model        string          `json:"model"`
+	Reasoning    string          `json:"reasoning"`
 	Prompt       string          `json:"prompt"`
 	Async        bool            `json:"async"`
 	ToolCalls    []tool.CallSpec `json:"tool_calls"`

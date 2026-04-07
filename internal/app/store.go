@@ -5,10 +5,12 @@ import (
 
 	"go-agent-platform/internal/config"
 	"go-agent-platform/internal/domain/agent"
+	"go-agent-platform/internal/domain/model"
 	"go-agent-platform/internal/domain/approval"
 	"go-agent-platform/internal/domain/audit"
 	"go-agent-platform/internal/domain/auth"
 	"go-agent-platform/internal/domain/session"
+	"go-agent-platform/internal/domain/skill"
 	"go-agent-platform/internal/domain/task"
 	"go-agent-platform/internal/domain/tool"
 	"go-agent-platform/internal/domain/workspace"
@@ -33,9 +35,33 @@ type Store interface {
 	SaveAgentVersion(item agent.Version) error
 	FindAgentVersion(versionID string) (agent.Version, error)
 	SaveTool(item tool.Tool) error
+	UpdateTool(item tool.Tool) error
+	DeleteTool(workspaceID, toolID string) error
 	ListTools(workspaceID string) ([]tool.Tool, error)
+	ListPlatformTools() ([]tool.Tool, error)
+	ListUserTools(userID string) ([]tool.Tool, error)
 	FindToolByID(toolID string) (tool.Tool, error)
+	InstallTool(userID, toolID string) error
+	UninstallTool(userID, toolID string) error
+	ListInstalledToolIDs(userID string) ([]string, error)
+	SaveSkill(item skill.Skill) error
+	UpdateSkill(item skill.Skill) error
+	DeleteSkill(workspaceID, skillID string) error
+	FindSkillByID(skillID string) (skill.Skill, error)
+	ListSkills(workspaceID string) ([]skill.Skill, error)
+	ListPlatformSkills() ([]skill.Skill, error)
+	ListUserSkills(userID string) ([]skill.Skill, error)
+	InstallSkill(userID, skillID string) error
+	UninstallSkill(userID, skillID string) error
+	ListInstalledSkillIDs(userID string) ([]string, error)
+	SaveModel(item model.Model) error
+	UpdateModel(item model.Model) error
+	DeleteModel(workspaceID, modelID string) error
+	FindModelByID(modelID string) (model.Model, error)
+	FindModelByKey(workspaceID, modelKey string) (model.Model, error)
+	ListModels(workspaceID string) ([]model.Model, error)
 	SaveSession(item session.Session) error
+	ListSessionsByAgent(userID, agentID string) ([]session.Session, error)
 	SaveMessage(item session.Message) error
 	ListMessages(sessionID string) ([]session.Message, error)
 	SaveSchedule(item task.Schedule) error
@@ -44,6 +70,7 @@ type Store interface {
 	SaveTask(item task.Task) error
 	UpdateTask(item task.Task) error
 	FindTaskByID(taskID string) (task.Task, error)
+	ListTasksBySession(sessionID string) ([]task.Task, error)
 	SaveTaskStep(item task.Step) error
 	SaveTaskSteps(items []task.Step) error
 	ReplaceTaskSteps(taskID string, items []task.Step) error

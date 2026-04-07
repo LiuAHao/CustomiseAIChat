@@ -12,11 +12,13 @@ import (
 
 	"go-agent-platform/internal/config"
 	"go-agent-platform/internal/domain/agent"
+	"go-agent-platform/internal/domain/model"
 	"go-agent-platform/internal/domain/approval"
 	"go-agent-platform/internal/domain/audit"
 	"go-agent-platform/internal/domain/auth"
 	"go-agent-platform/internal/domain/session"
 	"go-agent-platform/internal/domain/shared"
+	"go-agent-platform/internal/domain/skill"
 	"go-agent-platform/internal/domain/task"
 	"go-agent-platform/internal/domain/tool"
 	"go-agent-platform/internal/domain/workspace"
@@ -40,7 +42,11 @@ func New(cfg config.Config) (*Store, error) {
 
 	store := &Store{pool: pool}
 	if cfg.PostgresAutoMigrate {
-		if err := store.RunMigrations(resolveMigrationPath("migrations/001_init.sql")); err != nil {
+		if err := store.RunMigrations(
+			resolveMigrationPath("migrations/001_init.sql"),
+			resolveMigrationPath("migrations/002_skill_and_model_registry.sql"),
+			resolveMigrationPath("migrations/003_platform_catalog_and_chat.sql"),
+		); err != nil {
 			pool.Close()
 			return nil, err
 		}
@@ -53,17 +59,19 @@ func (s *Store) Close() error {
 	return nil
 }
 
-func (s *Store) RunMigrations(path string) error {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read migration: %w", err)
-	}
-	for _, stmt := range splitStatements(string(raw)) {
-		if strings.TrimSpace(stmt) == "" {
-			continue
+func (s *Store) RunMigrations(paths ...string) error {
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read migration: %w", err)
 		}
-		if _, err := s.pool.Exec(context.Background(), stmt); err != nil {
-			return fmt.Errorf("run migration: %w", err)
+		for _, stmt := range splitStatements(string(raw)) {
+			if strings.TrimSpace(stmt) == "" {
+				continue
+			}
+			if _, err := s.pool.Exec(context.Background(), stmt); err != nil {
+				return fmt.Errorf("run migration: %w", err)
+			}
 		}
 	}
 	return nil
@@ -123,6 +131,22 @@ func (s *Store) EnsureSeedData(cfg config.Config) error {
 		Role:        workspace.RoleOwner,
 		CreatedAt:   now,
 	}
+	defaultModel := model.Model{
+		ID:              shared.NewID("model"),
+		WorkspaceID:     ws.ID,
+		Name:            "Mock Provider",
+		Provider:        "mock",
+		ModelKey:        "mock-1",
+		Description:     "默认开发模型，用于本地调试和首轮联调。",
+		ContextWindow:   8192,
+		MaxOutputTokens: 2048,
+		Capabilities:    []string{"chat", "tools"},
+		Enabled:         true,
+		IsDefault:       true,
+		CreatedBy:       admin.ID,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -149,6 +173,31 @@ func (s *Store) EnsureSeedData(cfg config.Config) error {
 	}
 	if _, err := tx.Exec(ctx, `insert into memberships (id, workspace_id, user_id, role, created_at) values ($1,$2,$3,$4,$5)`,
 		member.ID, member.WorkspaceID, member.UserID, string(member.Role), member.CreatedAt); err != nil {
+		return err
+	}
+	capabilities, err := json.Marshal(defaultModel.Capabilities)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into models (id, workspace_id, name, provider, model_key, description, context_window, max_output_tokens, capabilities, enabled, is_default, created_by, created_at, updated_at)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+	`,
+		defaultModel.ID,
+		defaultModel.WorkspaceID,
+		defaultModel.Name,
+		defaultModel.Provider,
+		defaultModel.ModelKey,
+		defaultModel.Description,
+		defaultModel.ContextWindow,
+		defaultModel.MaxOutputTokens,
+		capabilities,
+		defaultModel.Enabled,
+		defaultModel.IsDefault,
+		defaultModel.CreatedBy,
+		defaultModel.CreatedAt,
+		defaultModel.UpdatedAt,
+	); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -251,33 +300,41 @@ func (s *Store) CreateWorkspace(item workspace.Workspace, member workspace.Membe
 }
 
 func (s *Store) SaveAgent(item agent.Agent) error {
+	skillPolicy, err := json.Marshal(item.SkillPolicy)
+	if err != nil {
+		return err
+	}
 	policy, err := json.Marshal(item.ToolPolicy)
 	if err != nil {
 		return err
 	}
 	_, err = s.pool.Exec(context.Background(), `
-		insert into agents (id, workspace_id, name, description, system_prompt, model, tool_policy, runtime_policy, published_version_id, created_by, created_at, updated_at)
-		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-	`, item.ID, item.WorkspaceID, item.Name, item.Description, item.SystemPrompt, item.Model, policy, item.RuntimePolicy, nullIfEmpty(item.PublishedVerID), item.CreatedBy, item.CreatedAt, item.UpdatedAt)
+		insert into agents (id, workspace_id, name, description, system_prompt, model, skill_policy, tool_policy, runtime_policy, published_version_id, created_by, created_at, updated_at)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	`, item.ID, item.WorkspaceID, item.Name, item.Description, item.SystemPrompt, item.Model, skillPolicy, policy, item.RuntimePolicy, nullIfEmpty(item.PublishedVerID), item.CreatedBy, item.CreatedAt, item.UpdatedAt)
 	return err
 }
 
 func (s *Store) UpdateAgent(item agent.Agent) error {
+	skillPolicy, err := json.Marshal(item.SkillPolicy)
+	if err != nil {
+		return err
+	}
 	policy, err := json.Marshal(item.ToolPolicy)
 	if err != nil {
 		return err
 	}
 	_, err = s.pool.Exec(context.Background(), `
 		update agents
-		set name = $2, description = $3, system_prompt = $4, model = $5, tool_policy = $6, runtime_policy = $7, published_version_id = $8, updated_at = $9
+		set name = $2, description = $3, system_prompt = $4, model = $5, skill_policy = $6, tool_policy = $7, runtime_policy = $8, published_version_id = $9, updated_at = $10
 		where id = $1
-	`, item.ID, item.Name, item.Description, item.SystemPrompt, item.Model, policy, item.RuntimePolicy, nullIfEmpty(item.PublishedVerID), item.UpdatedAt)
+	`, item.ID, item.Name, item.Description, item.SystemPrompt, item.Model, skillPolicy, policy, item.RuntimePolicy, nullIfEmpty(item.PublishedVerID), item.UpdatedAt)
 	return err
 }
 
 func (s *Store) FindAgentByID(agentID string) (agent.Agent, error) {
 	row := s.pool.QueryRow(context.Background(), `
-		select id, workspace_id, name, description, system_prompt, model, tool_policy, runtime_policy, coalesce(published_version_id, ''), created_by, created_at, updated_at
+		select id, workspace_id, name, description, system_prompt, model, skill_policy, tool_policy, runtime_policy, coalesce(published_version_id, ''), created_by, created_at, updated_at
 		from agents where id = $1
 	`, agentID)
 	return scanAgent(row)
@@ -285,7 +342,7 @@ func (s *Store) FindAgentByID(agentID string) (agent.Agent, error) {
 
 func (s *Store) ListAgents(workspaceID string) ([]agent.Agent, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		select id, workspace_id, name, description, system_prompt, model, tool_policy, runtime_policy, coalesce(published_version_id, ''), created_by, created_at, updated_at
+		select id, workspace_id, name, description, system_prompt, model, skill_policy, tool_policy, runtime_policy, coalesce(published_version_id, ''), created_by, created_at, updated_at
 		from agents where workspace_id = $1
 		order by created_at asc
 	`, workspaceID)
@@ -352,15 +409,45 @@ func (s *Store) SaveTool(item tool.Tool) error {
 		return err
 	}
 	_, err = s.pool.Exec(context.Background(), `
-		insert into tools (id, workspace_id, name, description, schema, config, requires_approval, enabled, created_by, created_at)
-		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-	`, item.ID, item.WorkspaceID, item.Name, item.Description, schema, configJSON, item.RequiresApproval, item.Enabled, item.CreatedBy, item.CreatedAt)
+		insert into tools (id, workspace_id, name, scope, description, schema, config, requires_approval, enabled, created_by, created_at)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+	`, item.ID, item.WorkspaceID, item.Name, item.Scope, item.Description, schema, configJSON, item.RequiresApproval, item.Enabled, item.CreatedBy, item.CreatedAt)
 	return err
+}
+
+func (s *Store) UpdateTool(item tool.Tool) error {
+	schema, err := json.Marshal(item.Schema)
+	if err != nil {
+		return err
+	}
+	configJSON, err := json.Marshal(item.Config)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(context.Background(), `
+		update tools
+		set name = $2, scope = $3, description = $4, schema = $5, config = $6, requires_approval = $7, enabled = $8
+		where id = $1
+	`, item.ID, item.Name, item.Scope, item.Description, schema, configJSON, item.RequiresApproval, item.Enabled)
+	return err
+}
+
+func (s *Store) DeleteTool(workspaceID, toolID string) error {
+	tag, err := s.pool.Exec(context.Background(), `
+		delete from tools where id = $1 and workspace_id = $2
+	`, toolID, workspaceID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("tool not found")
+	}
+	return nil
 }
 
 func (s *Store) ListTools(workspaceID string) ([]tool.Tool, error) {
 	rows, err := s.pool.Query(context.Background(), `
-		select id, workspace_id, name, description, schema, config, requires_approval, enabled, created_by, created_at
+		select id, workspace_id, name, scope, description, schema, config, requires_approval, enabled, created_by, created_at
 		from tools where workspace_id = $1
 		order by created_at asc
 	`, workspaceID)
@@ -382,10 +469,322 @@ func (s *Store) ListTools(workspaceID string) ([]tool.Tool, error) {
 
 func (s *Store) FindToolByID(toolID string) (tool.Tool, error) {
 	row := s.pool.QueryRow(context.Background(), `
-		select id, workspace_id, name, description, schema, config, requires_approval, enabled, created_by, created_at
+		select id, workspace_id, name, scope, description, schema, config, requires_approval, enabled, created_by, created_at
 		from tools where id = $1
 	`, toolID)
 	return scanTool(row)
+}
+
+func (s *Store) ListPlatformTools() ([]tool.Tool, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		select id, workspace_id, name, scope, description, schema, config, requires_approval, enabled, created_by, created_at
+		from tools where scope = $1
+		order by created_at asc
+	`, tool.ScopePlatform)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]tool.Tool, 0)
+	for rows.Next() {
+		item, err := scanTool(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListUserTools(userID string) ([]tool.Tool, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		select id, workspace_id, name, scope, description, schema, config, requires_approval, enabled, created_by, created_at
+		from tools where scope = $1 and created_by = $2
+		order by created_at asc
+	`, tool.ScopePersonal, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]tool.Tool, 0)
+	for rows.Next() {
+		item, err := scanTool(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) InstallTool(userID, toolID string) error {
+	_, err := s.pool.Exec(context.Background(), `
+		insert into user_tool_installs (user_id, tool_id, created_at)
+		values ($1,$2,$3)
+		on conflict (user_id, tool_id) do nothing
+	`, userID, toolID, time.Now().UTC())
+	return err
+}
+
+func (s *Store) UninstallTool(userID, toolID string) error {
+	_, err := s.pool.Exec(context.Background(), `
+		delete from user_tool_installs where user_id = $1 and tool_id = $2
+	`, userID, toolID)
+	return err
+}
+
+func (s *Store) ListInstalledToolIDs(userID string) ([]string, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		select tool_id from user_tool_installs where user_id = $1
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) SaveSkill(item skill.Skill) error {
+	schema, err := json.Marshal(item.Schema)
+	if err != nil {
+		return err
+	}
+	configJSON, err := json.Marshal(item.Config)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(context.Background(), `
+		insert into skills (id, workspace_id, name, slug, scope, description, version, entry, schema, config, enabled, created_by, created_at, updated_at)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+	`, item.ID, item.WorkspaceID, item.Name, item.Slug, item.Scope, item.Description, item.Version, item.Entry, schema, configJSON, item.Enabled, item.CreatedBy, item.CreatedAt, item.UpdatedAt)
+	return err
+}
+
+func (s *Store) UpdateSkill(item skill.Skill) error {
+	schema, err := json.Marshal(item.Schema)
+	if err != nil {
+		return err
+	}
+	configJSON, err := json.Marshal(item.Config)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(context.Background(), `
+		update skills
+		set name = $2, slug = $3, scope = $4, description = $5, version = $6, entry = $7, schema = $8, config = $9, enabled = $10, updated_at = $11
+		where id = $1
+	`, item.ID, item.Name, item.Slug, item.Scope, item.Description, item.Version, item.Entry, schema, configJSON, item.Enabled, item.UpdatedAt)
+	return err
+}
+
+func (s *Store) DeleteSkill(workspaceID, skillID string) error {
+	tag, err := s.pool.Exec(context.Background(), `
+		delete from skills where id = $1 and workspace_id = $2
+	`, skillID, workspaceID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("skill not found")
+	}
+	return nil
+}
+
+func (s *Store) FindSkillByID(skillID string) (skill.Skill, error) {
+	row := s.pool.QueryRow(context.Background(), `
+		select id, workspace_id, name, slug, scope, description, version, entry, schema, config, enabled, created_by, created_at, updated_at
+		from skills where id = $1
+	`, skillID)
+	return scanSkill(row)
+}
+
+func (s *Store) ListSkills(workspaceID string) ([]skill.Skill, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		select id, workspace_id, name, slug, scope, description, version, entry, schema, config, enabled, created_by, created_at, updated_at
+		from skills where workspace_id = $1
+		order by created_at asc
+	`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]skill.Skill, 0)
+	for rows.Next() {
+		item, err := scanSkill(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListPlatformSkills() ([]skill.Skill, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		select id, workspace_id, name, slug, scope, description, version, entry, schema, config, enabled, created_by, created_at, updated_at
+		from skills where scope = $1
+		order by created_at asc
+	`, skill.ScopePlatform)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]skill.Skill, 0)
+	for rows.Next() {
+		item, err := scanSkill(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) ListUserSkills(userID string) ([]skill.Skill, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		select id, workspace_id, name, slug, scope, description, version, entry, schema, config, enabled, created_by, created_at, updated_at
+		from skills where scope = $1 and created_by = $2
+		order by created_at asc
+	`, skill.ScopePersonal, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]skill.Skill, 0)
+	for rows.Next() {
+		item, err := scanSkill(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) InstallSkill(userID, skillID string) error {
+	_, err := s.pool.Exec(context.Background(), `
+		insert into user_skill_installs (user_id, skill_id, created_at)
+		values ($1,$2,$3)
+		on conflict (user_id, skill_id) do nothing
+	`, userID, skillID, time.Now().UTC())
+	return err
+}
+
+func (s *Store) UninstallSkill(userID, skillID string) error {
+	_, err := s.pool.Exec(context.Background(), `
+		delete from user_skill_installs where user_id = $1 and skill_id = $2
+	`, userID, skillID)
+	return err
+}
+
+func (s *Store) ListInstalledSkillIDs(userID string) ([]string, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		select skill_id from user_skill_installs where user_id = $1
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) SaveModel(item model.Model) error {
+	capabilities, err := json.Marshal(item.Capabilities)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(context.Background(), `
+		insert into models (id, workspace_id, name, provider, model_key, description, context_window, max_output_tokens, capabilities, enabled, is_default, created_by, created_at, updated_at)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+	`, item.ID, item.WorkspaceID, item.Name, item.Provider, item.ModelKey, item.Description, item.ContextWindow, item.MaxOutputTokens, capabilities, item.Enabled, item.IsDefault, item.CreatedBy, item.CreatedAt, item.UpdatedAt)
+	return err
+}
+
+func (s *Store) UpdateModel(item model.Model) error {
+	capabilities, err := json.Marshal(item.Capabilities)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(context.Background(), `
+		update models
+		set name = $2, provider = $3, model_key = $4, description = $5, context_window = $6, max_output_tokens = $7, capabilities = $8, enabled = $9, is_default = $10, updated_at = $11
+		where id = $1
+	`, item.ID, item.Name, item.Provider, item.ModelKey, item.Description, item.ContextWindow, item.MaxOutputTokens, capabilities, item.Enabled, item.IsDefault, item.UpdatedAt)
+	return err
+}
+
+func (s *Store) DeleteModel(workspaceID, modelID string) error {
+	tag, err := s.pool.Exec(context.Background(), `
+		delete from models where id = $1 and workspace_id = $2
+	`, modelID, workspaceID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("model not found")
+	}
+	return nil
+}
+
+func (s *Store) FindModelByID(modelID string) (model.Model, error) {
+	row := s.pool.QueryRow(context.Background(), `
+		select id, workspace_id, name, provider, model_key, description, context_window, max_output_tokens, capabilities, enabled, is_default, created_by, created_at, updated_at
+		from models where id = $1
+	`, modelID)
+	return scanModel(row)
+}
+
+func (s *Store) FindModelByKey(workspaceID, modelKey string) (model.Model, error) {
+	row := s.pool.QueryRow(context.Background(), `
+		select id, workspace_id, name, provider, model_key, description, context_window, max_output_tokens, capabilities, enabled, is_default, created_by, created_at, updated_at
+		from models where workspace_id = $1 and model_key = $2
+	`, workspaceID, modelKey)
+	return scanModel(row)
+}
+
+func (s *Store) ListModels(workspaceID string) ([]model.Model, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		select id, workspace_id, name, provider, model_key, description, context_window, max_output_tokens, capabilities, enabled, is_default, created_by, created_at, updated_at
+		from models where workspace_id = $1
+		order by is_default desc, created_at asc
+	`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]model.Model, 0)
+	for rows.Next() {
+		item, err := scanModel(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (s *Store) SaveSession(item session.Session) error {
@@ -394,6 +793,29 @@ func (s *Store) SaveSession(item session.Session) error {
 		values ($1,$2,$3,$4,$5,$6,$7)
 	`, item.ID, item.WorkspaceID, item.AgentID, item.CreatedBy, item.Title, item.CreatedAt, item.UpdatedAt)
 	return err
+}
+
+func (s *Store) ListSessionsByAgent(userID, agentID string) ([]session.Session, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		select id, workspace_id, agent_id, created_by, title, created_at, updated_at
+		from sessions
+		where created_by = $1 and agent_id = $2
+		order by updated_at desc, created_at desc
+	`, userID, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]session.Session, 0)
+	for rows.Next() {
+		var item session.Session
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.AgentID, &item.CreatedBy, &item.Title, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (s *Store) SaveMessage(item session.Message) error {
@@ -473,9 +895,9 @@ func (s *Store) SaveTask(item task.Task) error {
 		return err
 	}
 	_, err = s.pool.Exec(context.Background(), `
-		insert into tasks (id, trace_id, workspace_id, agent_id, session_id, prompt, status, result, error, created_by, approval_id, tool_calls, created_at, updated_at)
-		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-	`, item.ID, item.TraceID, item.WorkspaceID, item.AgentID, item.SessionID, item.Prompt, string(item.Status), item.Result, item.Error, item.CreatedBy, nullIfEmpty(item.ApprovalID), toolCalls, item.CreatedAt, item.UpdatedAt)
+		insert into tasks (id, trace_id, workspace_id, agent_id, session_id, prompt, model, reasoning, status, result, error, created_by, approval_id, tool_calls, created_at, updated_at)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+	`, item.ID, item.TraceID, item.WorkspaceID, item.AgentID, item.SessionID, item.Prompt, item.Model, item.Reasoning, string(item.Status), item.Result, item.Error, item.CreatedBy, nullIfEmpty(item.ApprovalID), toolCalls, item.CreatedAt, item.UpdatedAt)
 	return err
 }
 
@@ -486,21 +908,21 @@ func (s *Store) UpdateTask(item task.Task) error {
 	}
 	_, err = s.pool.Exec(context.Background(), `
 		update tasks
-		set status = $2, result = $3, error = $4, approval_id = $5, tool_calls = $6, updated_at = $7
+		set model = $2, reasoning = $3, status = $4, result = $5, error = $6, approval_id = $7, tool_calls = $8, updated_at = $9
 		where id = $1
-	`, item.ID, string(item.Status), item.Result, item.Error, nullIfEmpty(item.ApprovalID), toolCalls, item.UpdatedAt)
+	`, item.ID, item.Model, item.Reasoning, string(item.Status), item.Result, item.Error, nullIfEmpty(item.ApprovalID), toolCalls, item.UpdatedAt)
 	return err
 }
 
 func (s *Store) FindTaskByID(taskID string) (task.Task, error) {
 	row := s.pool.QueryRow(context.Background(), `
-		select id, trace_id, workspace_id, agent_id, session_id, prompt, status, result, error, created_by, coalesce(approval_id, ''), tool_calls, created_at, updated_at
+		select id, trace_id, workspace_id, agent_id, session_id, prompt, model, reasoning, status, result, error, created_by, coalesce(approval_id, ''), tool_calls, created_at, updated_at
 		from tasks where id = $1
 	`, taskID)
 	var item task.Task
 	var status string
 	var toolCalls []byte
-	if err := row.Scan(&item.ID, &item.TraceID, &item.WorkspaceID, &item.AgentID, &item.SessionID, &item.Prompt, &status, &item.Result, &item.Error, &item.CreatedBy, &item.ApprovalID, &toolCalls, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.TraceID, &item.WorkspaceID, &item.AgentID, &item.SessionID, &item.Prompt, &item.Model, &item.Reasoning, &status, &item.Result, &item.Error, &item.CreatedBy, &item.ApprovalID, &toolCalls, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return task.Task{}, errors.New("task not found")
 		}
@@ -511,6 +933,34 @@ func (s *Store) FindTaskByID(taskID string) (task.Task, error) {
 		return task.Task{}, err
 	}
 	return item, nil
+}
+
+func (s *Store) ListTasksBySession(sessionID string) ([]task.Task, error) {
+	rows, err := s.pool.Query(context.Background(), `
+		select id, trace_id, workspace_id, agent_id, session_id, model, reasoning, prompt, status, result, error, created_by, coalesce(approval_id, ''), tool_calls, created_at, updated_at
+		from tasks where session_id = $1
+		order by created_at asc
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]task.Task, 0)
+	for rows.Next() {
+		var item task.Task
+		var status string
+		var toolCalls []byte
+		if err := rows.Scan(&item.ID, &item.TraceID, &item.WorkspaceID, &item.AgentID, &item.SessionID, &item.Model, &item.Reasoning, &item.Prompt, &status, &item.Result, &item.Error, &item.CreatedBy, &item.ApprovalID, &toolCalls, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.Status = task.Status(status)
+		if err := json.Unmarshal(toolCalls, &item.ToolCalls); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (s *Store) SaveTaskStep(item task.Step) error {
@@ -712,11 +1162,15 @@ func scanAgent(scanner interface {
 	Scan(dest ...any) error
 }) (agent.Agent, error) {
 	var item agent.Agent
+	var skillPolicy []byte
 	var policy []byte
-	if err := scanner.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Description, &item.SystemPrompt, &item.Model, &policy, &item.RuntimePolicy, &item.PublishedVerID, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := scanner.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Description, &item.SystemPrompt, &item.Model, &skillPolicy, &policy, &item.RuntimePolicy, &item.PublishedVerID, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return agent.Agent{}, errors.New("agent not found")
 		}
+		return agent.Agent{}, err
+	}
+	if err := json.Unmarshal(skillPolicy, &item.SkillPolicy); err != nil {
 		return agent.Agent{}, err
 	}
 	if err := json.Unmarshal(policy, &item.ToolPolicy); err != nil {
@@ -731,7 +1185,7 @@ func scanTool(scanner interface {
 	var item tool.Tool
 	var schemaRaw []byte
 	var configRaw []byte
-	if err := scanner.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Description, &schemaRaw, &configRaw, &item.RequiresApproval, &item.Enabled, &item.CreatedBy, &item.CreatedAt); err != nil {
+	if err := scanner.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Scope, &item.Description, &schemaRaw, &configRaw, &item.RequiresApproval, &item.Enabled, &item.CreatedBy, &item.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return tool.Tool{}, errors.New("tool not found")
 		}
@@ -742,6 +1196,44 @@ func scanTool(scanner interface {
 	}
 	if err := json.Unmarshal(configRaw, &item.Config); err != nil {
 		return tool.Tool{}, err
+	}
+	return item, nil
+}
+
+func scanSkill(scanner interface {
+	Scan(dest ...any) error
+}) (skill.Skill, error) {
+	var item skill.Skill
+	var schemaRaw []byte
+	var configRaw []byte
+	if err := scanner.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Slug, &item.Scope, &item.Description, &item.Version, &item.Entry, &schemaRaw, &configRaw, &item.Enabled, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return skill.Skill{}, errors.New("skill not found")
+		}
+		return skill.Skill{}, err
+	}
+	if err := json.Unmarshal(schemaRaw, &item.Schema); err != nil {
+		return skill.Skill{}, err
+	}
+	if err := json.Unmarshal(configRaw, &item.Config); err != nil {
+		return skill.Skill{}, err
+	}
+	return item, nil
+}
+
+func scanModel(scanner interface {
+	Scan(dest ...any) error
+}) (model.Model, error) {
+	var item model.Model
+	var capabilitiesRaw []byte
+	if err := scanner.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Provider, &item.ModelKey, &item.Description, &item.ContextWindow, &item.MaxOutputTokens, &capabilitiesRaw, &item.Enabled, &item.IsDefault, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.Model{}, errors.New("model not found")
+		}
+		return model.Model{}, err
+	}
+	if err := json.Unmarshal(capabilitiesRaw, &item.Capabilities); err != nil {
+		return model.Model{}, err
 	}
 	return item, nil
 }

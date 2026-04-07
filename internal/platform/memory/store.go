@@ -8,11 +8,13 @@ import (
 
 	"go-agent-platform/internal/config"
 	"go-agent-platform/internal/domain/agent"
+	"go-agent-platform/internal/domain/model"
 	"go-agent-platform/internal/domain/approval"
 	"go-agent-platform/internal/domain/audit"
 	"go-agent-platform/internal/domain/auth"
 	"go-agent-platform/internal/domain/session"
 	"go-agent-platform/internal/domain/shared"
+	"go-agent-platform/internal/domain/skill"
 	"go-agent-platform/internal/domain/task"
 	"go-agent-platform/internal/domain/tool"
 	"go-agent-platform/internal/domain/workspace"
@@ -29,6 +31,10 @@ type Store struct {
 	agents        map[string]agent.Agent
 	agentVersions map[string]agent.Version
 	tools         map[string]tool.Tool
+	skills        map[string]skill.Skill
+	models        map[string]model.Model
+	installedTools  map[string]map[string]struct{}
+	installedSkills map[string]map[string]struct{}
 	sessions      map[string]session.Session
 	messages      map[string][]session.Message
 	tasks         map[string]task.Task
@@ -48,6 +54,10 @@ func NewStore() *Store {
 		agents:        make(map[string]agent.Agent),
 		agentVersions: make(map[string]agent.Version),
 		tools:         make(map[string]tool.Tool),
+		skills:        make(map[string]skill.Skill),
+		models:        make(map[string]model.Model),
+		installedTools:  make(map[string]map[string]struct{}),
+		installedSkills: make(map[string]map[string]struct{}),
 		sessions:      make(map[string]session.Session),
 		messages:      make(map[string][]session.Message),
 		tasks:         make(map[string]task.Task),
@@ -67,7 +77,8 @@ func (s *Store) EnsureSeedData(cfg config.Config) error {
 	defer s.mu.Unlock()
 
 	email := strings.ToLower(cfg.SeedAdminEmail)
-	if _, ok := s.usersByEmail[email]; ok {
+	if userID, ok := s.usersByEmail[email]; ok {
+		s.ensureDefaultModelLocked(userID)
 		return nil
 	}
 
@@ -92,12 +103,65 @@ func (s *Store) EnsureSeedData(cfg config.Config) error {
 		Role:        workspace.RoleOwner,
 		CreatedAt:   now,
 	}
+	defaultModel := model.Model{
+		ID:              shared.NewID("model"),
+		WorkspaceID:     ws.ID,
+		Name:            "Mock Provider",
+		Provider:        "mock",
+		ModelKey:        "mock-1",
+		Description:     "默认开发模型，用于本地调试和首轮联调。",
+		ContextWindow:   8192,
+		MaxOutputTokens: 2048,
+		Capabilities:    []string{"chat", "tools"},
+		Enabled:         true,
+		IsDefault:       true,
+		CreatedBy:       admin.ID,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
 
 	s.users[admin.ID] = admin
 	s.usersByEmail[email] = admin.ID
 	s.workspaces[ws.ID] = ws
 	s.memberships[member.ID] = member
+	s.models[defaultModel.ID] = defaultModel
 	return nil
+}
+
+func (s *Store) ensureDefaultModelLocked(userID string) {
+	var workspaceID string
+	for _, membership := range s.memberships {
+		if membership.UserID == userID {
+			workspaceID = membership.WorkspaceID
+			break
+		}
+	}
+	if workspaceID == "" {
+		return
+	}
+	for _, item := range s.models {
+		if item.WorkspaceID == workspaceID && item.ModelKey == "mock-1" {
+			return
+		}
+	}
+	now := time.Now().UTC()
+	modelID := shared.NewID("model")
+	s.models[modelID] = model.Model{
+		ID:              modelID,
+		WorkspaceID:     workspaceID,
+		Name:            "Mock Provider",
+		Provider:        "mock",
+		ModelKey:        "mock-1",
+		Description:     "默认开发模型，用于本地调试和首轮联调。",
+		ContextWindow:   8192,
+		MaxOutputTokens: 2048,
+		Capabilities:    []string{"chat", "tools"},
+		Enabled:         true,
+		IsDefault:       true,
+		CreatedBy:       userID,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
 }
 
 func (s *Store) FindUserByEmail(email string) (auth.User, error) {
@@ -248,6 +312,244 @@ func (s *Store) SaveTool(item tool.Tool) error {
 	return nil
 }
 
+func (s *Store) UpdateTool(item tool.Tool) error {
+	return s.SaveTool(item)
+}
+
+func (s *Store) DeleteTool(workspaceID, toolID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, ok := s.tools[toolID]
+	if !ok || item.WorkspaceID != workspaceID {
+		return errors.New("tool not found")
+	}
+	delete(s.tools, toolID)
+	return nil
+}
+
+func (s *Store) ListPlatformTools() ([]tool.Tool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := make([]tool.Tool, 0)
+	for _, item := range s.tools {
+		if item.Scope == tool.ScopePlatform {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (s *Store) ListUserTools(userID string) ([]tool.Tool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := make([]tool.Tool, 0)
+	for _, item := range s.tools {
+		if item.Scope == tool.ScopePersonal && item.CreatedBy == userID {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (s *Store) InstallTool(userID, toolID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.tools[toolID]; !ok {
+		return errors.New("tool not found")
+	}
+	if _, ok := s.installedTools[userID]; !ok {
+		s.installedTools[userID] = make(map[string]struct{})
+	}
+	s.installedTools[userID][toolID] = struct{}{}
+	return nil
+}
+
+func (s *Store) UninstallTool(userID, toolID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.installedTools[userID]; ok {
+		delete(s.installedTools[userID], toolID)
+	}
+	return nil
+}
+
+func (s *Store) ListInstalledToolIDs(userID string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]string, 0)
+	for id := range s.installedTools[userID] {
+		items = append(items, id)
+	}
+	return items, nil
+}
+
+func (s *Store) SaveSkill(item skill.Skill) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.skills[item.ID] = item
+	return nil
+}
+
+func (s *Store) ListPlatformSkills() ([]skill.Skill, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := make([]skill.Skill, 0)
+	for _, item := range s.skills {
+		if item.Scope == skill.ScopePlatform {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (s *Store) ListUserSkills(userID string) ([]skill.Skill, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := make([]skill.Skill, 0)
+	for _, item := range s.skills {
+		if item.Scope == skill.ScopePersonal && item.CreatedBy == userID {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (s *Store) InstallSkill(userID, skillID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.skills[skillID]; !ok {
+		return errors.New("skill not found")
+	}
+	if _, ok := s.installedSkills[userID]; !ok {
+		s.installedSkills[userID] = make(map[string]struct{})
+	}
+	s.installedSkills[userID][skillID] = struct{}{}
+	return nil
+}
+
+func (s *Store) UninstallSkill(userID, skillID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.installedSkills[userID]; ok {
+		delete(s.installedSkills[userID], skillID)
+	}
+	return nil
+}
+
+func (s *Store) ListInstalledSkillIDs(userID string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]string, 0)
+	for id := range s.installedSkills[userID] {
+		items = append(items, id)
+	}
+	return items, nil
+}
+
+func (s *Store) UpdateSkill(item skill.Skill) error {
+	return s.SaveSkill(item)
+}
+
+func (s *Store) DeleteSkill(workspaceID, skillID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, ok := s.skills[skillID]
+	if !ok || item.WorkspaceID != workspaceID {
+		return errors.New("skill not found")
+	}
+	delete(s.skills, skillID)
+	return nil
+}
+
+func (s *Store) FindSkillByID(skillID string) (skill.Skill, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	item, ok := s.skills[skillID]
+	if !ok {
+		return skill.Skill{}, errors.New("skill not found")
+	}
+	return item, nil
+}
+
+func (s *Store) ListSkills(workspaceID string) ([]skill.Skill, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := make([]skill.Skill, 0)
+	for _, item := range s.skills {
+		if item.WorkspaceID == workspaceID {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (s *Store) SaveModel(item model.Model) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.models[item.ID] = item
+	return nil
+}
+
+func (s *Store) UpdateModel(item model.Model) error {
+	return s.SaveModel(item)
+}
+
+func (s *Store) DeleteModel(workspaceID, modelID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, ok := s.models[modelID]
+	if !ok || item.WorkspaceID != workspaceID {
+		return errors.New("model not found")
+	}
+	delete(s.models, modelID)
+	return nil
+}
+
+func (s *Store) FindModelByID(modelID string) (model.Model, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	item, ok := s.models[modelID]
+	if !ok {
+		return model.Model{}, errors.New("model not found")
+	}
+	return item, nil
+}
+
+func (s *Store) FindModelByKey(workspaceID, modelKey string) (model.Model, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, item := range s.models {
+		if item.WorkspaceID == workspaceID && item.ModelKey == modelKey {
+			return item, nil
+		}
+	}
+	return model.Model{}, errors.New("model not found")
+}
+
+func (s *Store) ListModels(workspaceID string) ([]model.Model, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := make([]model.Model, 0)
+	for _, item := range s.models {
+		if item.WorkspaceID == workspaceID {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
 func (s *Store) ListTools(workspaceID string) ([]tool.Tool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -277,6 +579,19 @@ func (s *Store) SaveSession(item session.Session) error {
 	defer s.mu.Unlock()
 	s.sessions[item.ID] = item
 	return nil
+}
+
+func (s *Store) ListSessionsByAgent(userID, agentID string) ([]session.Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := make([]session.Session, 0)
+	for _, item := range s.sessions {
+		if item.AgentID == agentID && item.CreatedBy == userID {
+			items = append(items, item)
+		}
+	}
+	return items, nil
 }
 
 func (s *Store) SaveMessage(item session.Message) error {
@@ -338,6 +653,19 @@ func (s *Store) FindTaskByID(taskID string) (task.Task, error) {
 		return task.Task{}, errors.New("task not found")
 	}
 	return item, nil
+}
+
+func (s *Store) ListTasksBySession(sessionID string) ([]task.Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := make([]task.Task, 0)
+	for _, item := range s.tasks {
+		if item.SessionID == sessionID {
+			items = append(items, item)
+		}
+	}
+	return items, nil
 }
 
 func (s *Store) SaveTaskStep(item task.Step) error {

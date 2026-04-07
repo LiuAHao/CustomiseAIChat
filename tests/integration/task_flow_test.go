@@ -90,18 +90,10 @@ func loginAndGetWorkspace(t *testing.T, baseURL string) (string, string) {
 	meResp := authorizedRequest(t, http.MethodGet, baseURL+"/api/v1/me", payload.Token, nil)
 	defer meResp.Body.Close()
 
-	var mePayload struct {
-		Workspaces []struct {
-			ID string `json:"id"`
-		} `json:"workspaces"`
+	if meResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from /me, got %d", meResp.StatusCode)
 	}
-	if err := json.NewDecoder(meResp.Body).Decode(&mePayload); err != nil {
-		t.Fatalf("decode /me failed: %v", err)
-	}
-	if len(mePayload.Workspaces) == 0 {
-		t.Fatal("expected at least one workspace")
-	}
-	return payload.Token, mePayload.Workspaces[0].ID
+	return payload.Token, ""
 }
 
 func createAgentAndPublish(t *testing.T, baseURL, token, workspaceID string) string {
